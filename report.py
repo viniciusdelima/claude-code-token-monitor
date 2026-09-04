@@ -104,7 +104,7 @@ def format_report(rows):
     header = f"{'Período':<14} {'Tokens':>10} {'Custo($)':>10} {'Conversas':>10} {'CtxMédio':>10} {'CtxPico':>10}"
     lines = [header]
     for r in rows:
-        cost = "N/D" if r["cost_unknown"] and r["cost_usd"] == 0 else f"{r['cost_usd']:.4f}"
+        cost = "N/D" if r["cost_unknown"] else f"{r['cost_usd']:.4f}"
         lines.append(
             f"{r['bucket']:<14} {r['total_tokens']:>10} {cost:>10} "
             f"{r['session_count']:>10} {r['avg_context']:>10.0f} {r['peak_context']:>10}"

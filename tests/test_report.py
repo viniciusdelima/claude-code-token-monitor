@@ -92,6 +92,25 @@ def test_query_report_since_filters_older_rows(tmp_path):
     conn.close()
 
 
+def test_format_report_shows_nd_for_mixed_known_and_unknown_model_bucket(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    _seed(conn, [
+        ("u1", "s1", "proj", "/p", "2026-09-01T10:00:00Z", "claude-sonnet-5", 1_000_000, 0, 0, 0),
+        ("u2", "s2", "proj", "/p", "2026-09-01T12:00:00Z", "some-future-model", 1000, 0, 0, 0),
+    ])
+
+    rows = report.query_report(conn, period="day", group_by="day")
+    conn.close()
+
+    assert rows[0]["cost_unknown"] is True
+    assert rows[0]["cost_usd"] == 2.00  # partial cost from the known model only
+
+    output = report.format_report(rows)
+
+    assert "N/D" in output
+    assert "2.0000" not in output
+
+
 def test_format_report_handles_empty_rows():
     assert report.format_report([]) == "Sem dados no período."
 
