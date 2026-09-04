@@ -1,4 +1,4 @@
-# claude-token-monitor
+# claude-code-token-monitor
 
 Monitoramento local de tokens gastos no [Claude Code](https://claude.com/claude-code): relatório diário/semanal/mensal/por sessão/por projeto, custo estimado em USD, e detecção de anomalia de consumo com evidência concreta (qual sessão, qual ferramenta, quanto contexto).
 
@@ -16,7 +16,7 @@ Design completo em [`DESIGN.md`](DESIGN.md).
 ## Instalação
 
 ```bash
-git clone https://github.com/viniciusdelima/claude-token-monitor.git ~/.claude/tools/token-monitor
+git clone https://github.com/viniciusdelima/claude-code-token-monitor.git ~/.claude/tools/token-monitor
 cd ~/.claude/tools/token-monitor
 python3 -m pytest   # opcional, confirma que tudo passa na sua máquina
 ```
