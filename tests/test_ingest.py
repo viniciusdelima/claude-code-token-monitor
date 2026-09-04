@@ -52,3 +52,59 @@ def test_parse_line_skips_assistant_without_usage():
 def test_parse_line_skips_blank_line():
     assert ingest.parse_line("") is None
     assert ingest.parse_line("   \n") is None
+
+
+import db
+
+
+def test_ingest_file_inserts_only_usable_events(tmp_path):
+    db_path = tmp_path / "usage.db"
+    conn = db.get_connection(db_path)
+
+    inserted = ingest.ingest_file(conn, FIXTURE)
+
+    assert inserted == 1  # only the middle line has usage
+    row = conn.execute("SELECT uuid FROM usage_events").fetchone()
+    assert row == ("uuid-1",)
+    conn.close()
+
+
+def test_ingest_file_is_idempotent(tmp_path):
+    db_path = tmp_path / "usage.db"
+    conn = db.get_connection(db_path)
+
+    first = ingest.ingest_file(conn, FIXTURE)
+    second = ingest.ingest_file(conn, FIXTURE)
+
+    assert first == 1
+    assert second == 0  # same uuid, already present
+    count = conn.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0]
+    assert count == 1
+    conn.close()
+
+
+def test_iter_jsonl_files_finds_nested_files(tmp_path):
+    (tmp_path / "proj-a").mkdir()
+    (tmp_path / "proj-a" / "session1.jsonl").write_text("")
+    (tmp_path / "proj-b").mkdir()
+    (tmp_path / "proj-b" / "session2.jsonl").write_text("")
+    (tmp_path / "not-jsonl.txt").write_text("")
+
+    found = ingest.iter_jsonl_files(tmp_path)
+
+    assert {p.name for p in found} == {"session1.jsonl", "session2.jsonl"}
+
+
+def test_ingest_all_sums_across_files(tmp_path):
+    projects_root = tmp_path / "projects"
+    proj_dir = projects_root / "wiseup-plus"
+    proj_dir.mkdir(parents=True)
+    (proj_dir / "session.jsonl").write_text(FIXTURE.read_text())
+
+    db_path = tmp_path / "usage.db"
+    conn = db.get_connection(db_path)
+
+    inserted = ingest.ingest_all(conn, projects_root=projects_root)
+
+    assert inserted == 1
+    conn.close()

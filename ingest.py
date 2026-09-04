@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import db
+
 DEFAULT_PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
 
@@ -46,3 +48,55 @@ def parse_line(line):
         "thinking_tokens": thinking,
         "tool_names": extract_tool_names(message.get("content") or []),
     }
+
+
+def ingest_file(conn, path):
+    inserted = 0
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            event = parse_line(line)
+            if event is None or not event["uuid"]:
+                continue
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO usage_events
+                (uuid, session_id, project, cwd, timestamp, model,
+                 input_tokens, output_tokens, cache_creation_tokens,
+                 cache_read_tokens, thinking_tokens, tool_names)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event["uuid"], event["session_id"], event["project"],
+                    event["cwd"], event["timestamp"], event["model"],
+                    event["input_tokens"], event["output_tokens"],
+                    event["cache_creation_tokens"], event["cache_read_tokens"],
+                    event["thinking_tokens"], event["tool_names"],
+                ),
+            )
+            inserted += cur.rowcount
+    conn.commit()
+    return inserted
+
+
+def iter_jsonl_files(root):
+    if not root.exists():
+        return []
+    return sorted(root.glob("**/*.jsonl"))
+
+
+def ingest_all(conn, projects_root=DEFAULT_PROJECTS_ROOT):
+    total = 0
+    for path in iter_jsonl_files(projects_root):
+        total += ingest_file(conn, path)
+    return total
+
+
+def main(argv=None):
+    conn = db.get_connection()
+    inserted = ingest_all(conn)
+    print(f"Ingested {inserted} new events.")
+    conn.close()
+
+
+if __name__ == "__main__":
+    main()
