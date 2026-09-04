@@ -1,4 +1,6 @@
 import json
+import sqlite3
+import sys
 from pathlib import Path
 
 import db
@@ -54,26 +56,39 @@ def ingest_file(conn, path):
     inserted = 0
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
-            event = parse_line(line)
-            if event is None or not event["uuid"]:
+            try:
+                event = parse_line(line)
+                if event is None or not event["uuid"]:
+                    continue
+                cur = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO usage_events
+                    (uuid, session_id, project, cwd, timestamp, model,
+                     input_tokens, output_tokens, cache_creation_tokens,
+                     cache_read_tokens, thinking_tokens, tool_names)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event["uuid"], event["session_id"], event["project"],
+                        event["cwd"], event["timestamp"], event["model"],
+                        event["input_tokens"], event["output_tokens"],
+                        event["cache_creation_tokens"], event["cache_read_tokens"],
+                        event["thinking_tokens"], event["tool_names"],
+                    ),
+                )
+                inserted += cur.rowcount
+            except sqlite3.IntegrityError as exc:
+                print(
+                    f"ingest: skipping bad line in {path}: {exc}",
+                    file=sys.stderr,
+                )
                 continue
-            cur = conn.execute(
-                """
-                INSERT OR IGNORE INTO usage_events
-                (uuid, session_id, project, cwd, timestamp, model,
-                 input_tokens, output_tokens, cache_creation_tokens,
-                 cache_read_tokens, thinking_tokens, tool_names)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event["uuid"], event["session_id"], event["project"],
-                    event["cwd"], event["timestamp"], event["model"],
-                    event["input_tokens"], event["output_tokens"],
-                    event["cache_creation_tokens"], event["cache_read_tokens"],
-                    event["thinking_tokens"], event["tool_names"],
-                ),
-            )
-            inserted += cur.rowcount
+            except Exception as exc:  # defensive: never let one bad line kill the run
+                print(
+                    f"ingest: skipping bad line in {path}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
     conn.commit()
     return inserted
 

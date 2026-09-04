@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import ingest
@@ -107,4 +108,50 @@ def test_ingest_all_sums_across_files(tmp_path):
     inserted = ingest.ingest_all(conn, projects_root=projects_root)
 
     assert inserted == 1
+    conn.close()
+
+
+def test_ingest_file_skips_line_with_null_required_field(tmp_path):
+    # A line that parses fine (has a uuid) but is missing "sessionId",
+    # which is a NOT NULL column in the schema -> would raise
+    # sqlite3.IntegrityError on INSERT if not caught.
+    bad_line = json.dumps(
+        {
+            "type": "assistant",
+            "uuid": "uuid-bad",
+            # no "sessionId" at all -> parse_line yields session_id=None
+            "cwd": "/home/viniciusdelima/wiser/wiseup-plus",
+            "timestamp": "2026-09-04T20:33:00.000Z",
+            "message": {
+                "model": "claude-opus-4-7",
+                "content": [],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        }
+    )
+    good_line = json.dumps(
+        {
+            "type": "assistant",
+            "uuid": "uuid-good",
+            "sessionId": "sess-1",
+            "cwd": "/home/viniciusdelima/wiser/wiseup-plus",
+            "timestamp": "2026-09-04T20:34:00.000Z",
+            "message": {
+                "model": "claude-opus-4-7",
+                "content": [],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        }
+    )
+    session_path = tmp_path / "mixed_session.jsonl"
+    session_path.write_text(bad_line + "\n" + good_line + "\n")
+
+    db_path = tmp_path / "usage.db"
+    conn = db.get_connection(db_path)
+
+    inserted = ingest.ingest_file(conn, session_path)  # must not raise
+
+    assert inserted == 1  # only the good line counted
+    row = conn.execute("SELECT uuid FROM usage_events").fetchone()
+    assert row == ("uuid-good",)
     conn.close()
