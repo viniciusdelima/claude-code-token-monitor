@@ -1,4 +1,5 @@
 import statistics
+from datetime import date, timedelta
 from pathlib import Path
 
 import db
@@ -29,16 +30,31 @@ def detect_latest_anomaly(series, z_threshold=2.0, fixed_multiplier=1.5):
     return None
 
 
-def daily_context_series(conn, days=30):
+def daily_context_series(conn, days=30, today=None):
+    # `today` lets callers (tests) pin the reference date for the lookback
+    # window instead of the real system clock, which the wall-clock-driven
+    # `date('now', ...)` used otherwise. Production call sites pass nothing
+    # and get the exact old (wall-clock) behavior.
+    # Per DESIGN.md §9, the anomaly series sums context_size + output_tokens
+    # (total token volume), not just context_size -- that's used elsewhere
+    # (evidence display, report.py) with its own narrower meaning.
+    if today is None:
+        where = "WHERE timestamp >= date('now', ?)"
+        params = (f"-{days} days",)
+    else:
+        cutoff = (date.fromisoformat(today) - timedelta(days=days)).isoformat()
+        where = "WHERE timestamp >= ?"
+        params = (cutoff,)
+
     sql = f"""
         SELECT strftime('%Y-%m-%d', timestamp) AS day,
-               SUM({CONTEXT_SIZE_EXPR}) AS total_context
+               SUM({CONTEXT_SIZE_EXPR} + output_tokens) AS total_context
         FROM usage_events
-        WHERE timestamp >= date('now', ?)
+        {where}
         GROUP BY day
         ORDER BY day
     """
-    cur = conn.execute(sql, (f"-{days} days",))
+    cur = conn.execute(sql, params)
     return [(row[0], row[1]) for row in cur.fetchall()]
 
 
@@ -67,8 +83,8 @@ def jsonl_path_for(event):
     return str(Path.home() / ".claude" / "projects" / event["project"] / f"{event['session_id']}.jsonl")
 
 
-def build_insight_report(conn, days=30, evidence_limit=5):
-    series = daily_context_series(conn, days=days)
+def build_insight_report(conn, days=30, evidence_limit=5, today=None):
+    series = daily_context_series(conn, days=days, today=today)
     anomaly = detect_latest_anomaly(series)
     if anomaly is None:
         return None

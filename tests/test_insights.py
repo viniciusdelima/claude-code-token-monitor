@@ -30,6 +30,35 @@ def test_daily_context_series_sums_per_day(tmp_path):
     conn.close()
 
 
+def test_daily_context_series_includes_output_tokens(tmp_path):
+    # DESIGN.md §9: the anomaly series sums context_size + output_tokens,
+    # not just context_size.
+    conn = db.get_connection(tmp_path / "usage.db")
+    _seed(conn, [
+        ("u1", "s1", "proj", "/p", "2026-09-01T10:00:00Z", 100, 50, 10, 5, "Read"),
+    ])
+
+    series = insights.daily_context_series(conn, days=30)
+
+    assert series == [("2026-09-01", 165.0)]  # 100+50+10+5
+    conn.close()
+
+
+def test_daily_context_series_today_pins_the_lookback_window(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    _seed(conn, [
+        ("u1", "s1", "proj", "/p", "2026-08-01T10:00:00Z", 100, 0, 0, 0, ""),
+        ("u2", "s1", "proj", "/p", "2026-09-01T10:00:00Z", 200, 0, 0, 0, ""),
+    ])
+
+    # With today pinned well past both events but within 30 days of the
+    # earlier one, both days show up regardless of the real wall clock.
+    series = insights.daily_context_series(conn, days=30, today="2026-08-31")
+
+    assert series == [("2026-08-01", 100.0), ("2026-09-01", 200.0)]
+    conn.close()
+
+
 def test_top_context_events_orders_by_context_size_desc(tmp_path):
     conn = db.get_connection(tmp_path / "usage.db")
     _seed(conn, [
@@ -78,18 +107,27 @@ def test_build_insight_report_returns_none_without_anomaly(tmp_path):
     conn.close()
 
 
-def test_build_insight_report_includes_evidence_on_anomaly(tmp_path, monkeypatch):
+def test_build_insight_report_includes_evidence_on_anomaly(tmp_path):
+    # daily_context_series filters on a 30-day lookback from "today". Without
+    # pinning "today", this test's 7-day seeded history ages out of that
+    # window as real wall-clock time advances, so it was accidentally
+    # exercising the fixed_rule branch (<7 days of history) instead of the
+    # intended zscore branch (>=7 days). Pin "today" so the full 7-day
+    # history (2026-08-01..07) plus the spike (2026-09-01) reliably falls
+    # inside the window regardless of when this test actually runs.
     conn = db.get_connection(tmp_path / "usage.db")
+    history_values = [95, 105, 98, 102, 97, 103, 100]  # non-zero variance
     rows = []
-    for day in range(1, 8):
-        rows.append((f"u{day}", f"s{day}", "proj", "/p", f"2026-08-0{day}T10:00:00Z", 100, 0, 0, 0, ""))
+    for day, value in zip(range(1, 8), history_values):
+        rows.append((f"u{day}", f"s{day}", "proj", "/p", f"2026-08-0{day}T10:00:00Z", value, 0, 0, 0, ""))
     rows.append(("u-spike", "s-spike", "proj", "/p", "2026-09-01T10:00:00Z", 5000, 0, 0, 0, "Read"))
     _seed(conn, rows)
 
-    report = insights.build_insight_report(conn)
+    report = insights.build_insight_report(conn, today="2026-08-31")
 
     assert report is not None
     assert "s-spike" in report
+    assert "sigma" in report  # zscore branch's header wording, not fixed_rule's
     conn.close()
 
 
