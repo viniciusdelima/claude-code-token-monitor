@@ -1,3 +1,5 @@
+import re
+
 MODEL_PRICING = {
     "claude-opus-5": {"input": 5.00, "cache_write_5m": 6.25, "cache_write_1h": 10.00, "cache_read": 0.50, "output": 25.00},
     "claude-opus-4-8": {"input": 5.00, "cache_write_5m": 6.25, "cache_write_1h": 10.00, "cache_read": 0.50, "output": 25.00},
@@ -12,7 +14,19 @@ MODEL_PRICING = {
 
 
 def estimate_cost_usd(model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens):
+    if not (input_tokens or output_tokens or cache_creation_tokens or cache_read_tokens):
+        # A model contributing zero tokens shouldn't blank out a whole bucket
+        # as "unknown cost", even if the model itself is unrecognized.
+        return 0.0
+
+    # Real Claude Code logs record dated model ids (e.g.
+    # "claude-haiku-4-5-20251001"), but the pricing table is keyed on the
+    # undated id. Try the exact model first, then fall back to the
+    # date-stripped form.
     prices = MODEL_PRICING.get(model)
+    if prices is None and isinstance(model, str):
+        normalized = re.sub(r"-\d{8}$", "", model)
+        prices = MODEL_PRICING.get(normalized)
     if prices is None:
         return None
     # cache_creation_tokens isn't split by TTL in usage_events, so this

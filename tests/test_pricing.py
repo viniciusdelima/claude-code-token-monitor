@@ -33,3 +33,33 @@ def test_unknown_model_returns_none():
         cache_read_tokens=0,
     )
     assert cost is None
+
+
+def test_dated_model_id_resolves_to_same_cost_as_undated():
+    dated = pricing.estimate_cost_usd(
+        model="claude-haiku-4-5-20251001",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        cache_creation_tokens=1_000_000,
+        cache_read_tokens=1_000_000,
+    )
+    undated = pricing.estimate_cost_usd(
+        model="claude-haiku-4-5",
+        input_tokens=1_000_000,
+        output_tokens=1_000_000,
+        cache_creation_tokens=1_000_000,
+        cache_read_tokens=1_000_000,
+    )
+    assert dated is not None
+    assert dated == undated
+
+
+def test_unrecognized_model_with_zero_tokens_returns_zero_not_none():
+    cost = pricing.estimate_cost_usd(
+        model="some-future-model",
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+    )
+    assert cost == 0.0
