@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS usage_events (
   cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   thinking_tokens INTEGER NOT NULL DEFAULT 0,
-  tool_names TEXT
+  tool_names TEXT,
+  inference_geo TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id);
@@ -28,4 +29,9 @@ def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.executescript(SCHEMA_SQL)
+    try:
+        conn.execute("ALTER TABLE usage_events ADD COLUMN inference_geo TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists (fresh DBs get it from SCHEMA_SQL above)
     return conn
