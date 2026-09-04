@@ -10,14 +10,21 @@ Argumentos aceitos após `/token-report` (todos opcionais):
 - período: `day` (default), `week`, `month`
 - `--group-by`: `day` (default), `session`, `project`
 - `--since YYYY-MM-DD`
+- `--mcp-servers`: em vez do relatório por período, mostra custo/tokens
+  agrupado por servidor MCP (`native` = só ferramenta nativa, `mixed` = mais
+  de um servidor distinto no mesmo turno). Ignora `--period`/`--group-by`
+  quando presente.
 
 ## Passos
 
 1. Ingerir dados novos (idempotente, seguro rodar sempre):
    `python3 ~/.claude/tools/token-monitor/ingest.py`
 
-2. Gerar o relatório do período pedido:
-   `python3 ~/.claude/tools/token-monitor/report.py --period <period> --group-by <group_by> [--since <since>]`
+2. Gerar o relatório:
+   - Se o usuário passou `--mcp-servers`: `python3 ~/.claude/tools/token-monitor/report.py --mcp-servers`
+   - Senão: `python3 ~/.claude/tools/token-monitor/report.py --period <period> --group-by <group_by> [--since <since>]`
+     (se `<period>`/`<group_by>` não foram passados pelo usuário, pode omitir
+     as flags — o script reusa o último valor salvo automaticamente)
 
 3. Checar anomalia no período recente (30 dias):
    `python3 ~/.claude/tools/token-monitor/insights.py`
