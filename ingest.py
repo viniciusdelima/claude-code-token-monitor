@@ -60,6 +60,11 @@ def ingest_file(conn, path):
                 event = parse_line(line)
                 if event is None or not event["uuid"]:
                     continue
+                # `cwd` on a JSONL line drifts if the user `cd`s mid-session,
+                # so it's not a reliable source for `project`. The directory
+                # actually containing this file is always correct -- that's
+                # literally where Claude Code put it.
+                event["project"] = path.parent.name
                 cur = conn.execute(
                     """
                     INSERT OR IGNORE INTO usage_events

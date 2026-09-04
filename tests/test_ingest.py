@@ -111,6 +111,43 @@ def test_ingest_all_sums_across_files(tmp_path):
     conn.close()
 
 
+def test_ingest_file_derives_project_from_path_not_cwd(tmp_path):
+    # Claude Code names a session's project dir from the cwd the session was
+    # *launched* from, but `cwd` on later JSONL lines follows the shell if
+    # the user `cd`s mid-session. `project` must reflect the file's real
+    # on-disk containing directory, never a drifted `cwd`.
+    proj_dir = tmp_path / "actual-project-dir"
+    proj_dir.mkdir()
+    line = json.dumps(
+        {
+            "type": "assistant",
+            "uuid": "uuid-drift",
+            "sessionId": "sess-drift",
+            "cwd": "/some/other/directory/that/does/not/match",
+            "timestamp": "2026-09-04T20:35:00.000Z",
+            "message": {
+                "model": "claude-opus-4-7",
+                "content": [],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        }
+    )
+    session_path = proj_dir / "session.jsonl"
+    session_path.write_text(line + "\n")
+
+    db_path = tmp_path / "usage.db"
+    conn = db.get_connection(db_path)
+
+    inserted = ingest.ingest_file(conn, session_path)
+
+    assert inserted == 1
+    row = conn.execute(
+        "SELECT project FROM usage_events WHERE uuid = 'uuid-drift'"
+    ).fetchone()
+    assert row == ("actual-project-dir",)  # not "that-does-not-match" from cwd
+    conn.close()
+
+
 def test_ingest_file_skips_line_with_null_required_field(tmp_path):
     # A line that parses fine (has a uuid) but is missing "sessionId",
     # which is a NOT NULL column in the schema -> would raise

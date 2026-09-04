@@ -55,10 +55,17 @@ def test_dominant_reason_cache_read_heavy():
     assert "acumulado" in insights.dominant_reason(event)
 
 
-def test_jsonl_path_for_replaces_slashes_in_cwd():
-    event = {"cwd": "/home/viniciusdelima/wiser/wiseup-plus", "session_id": "abc"}
+def test_jsonl_path_for_uses_project_field_not_cwd():
+    # `project` (derived at ingest time from the file's real on-disk
+    # directory) is the source of truth -- `cwd` can drift mid-session and
+    # must not be used here, even if it disagrees with `project`.
+    event = {
+        "cwd": "/some/drifted/directory",
+        "project": "wiseup-plus",
+        "session_id": "abc",
+    }
     path = insights.jsonl_path_for(event)
-    assert path.endswith("/.claude/projects/-home-viniciusdelima-wiser-wiseup-plus/abc.jsonl")
+    assert path.endswith("/.claude/projects/wiseup-plus/abc.jsonl")
 
 
 def test_build_insight_report_returns_none_without_anomaly(tmp_path):

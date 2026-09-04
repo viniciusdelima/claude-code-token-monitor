@@ -64,8 +64,7 @@ def dominant_reason(event):
 
 
 def jsonl_path_for(event):
-    project_dir = event["cwd"].replace("/", "-")
-    return str(Path.home() / ".claude" / "projects" / project_dir / f"{event['session_id']}.jsonl")
+    return str(Path.home() / ".claude" / "projects" / event["project"] / f"{event['session_id']}.jsonl")
 
 
 def build_insight_report(conn, days=30, evidence_limit=5):
