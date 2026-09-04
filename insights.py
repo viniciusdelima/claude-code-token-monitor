@@ -158,6 +158,27 @@ def format_mcp_bottleneck(metrics):
     return "\n".join(lines)
 
 
+def build_native_category_metrics(conn, since=None):
+    rows = report_queries.query_native_category_report(conn, since=since)
+    total = sum(r["total_tokens"] for r in rows)
+    if not rows or total == 0:
+        return None
+    return {"rows": rows, "total_tokens": total}
+
+
+def format_native_category_breakdown(metrics):
+    lines = ["Gargalo dentro do nativo (por tipo de uso):"]
+    for r in metrics["rows"][:8]:
+        share = r["total_tokens"] / metrics["total_tokens"] * 100
+        cost = "N/D" if r["cost_unknown"] else f"${r['cost_usd']:.2f}"
+        label = report_queries.NATIVE_CATEGORY_LABELS.get(r["bucket"], r["bucket"])
+        lines.append(f"  - {label}: {r['total_tokens']} tokens ({share:.1f}%), {cost}")
+    top = metrics["rows"][0]
+    top_label = report_queries.NATIVE_CATEGORY_LABELS.get(top["bucket"], top["bucket"])
+    lines.append(f"  -> Maior fatia do nativo: {top_label}.")
+    return "\n".join(lines)
+
+
 def session_bottleneck_reason(entry):
     total = entry["total_tokens"] or 1
     cache_read_share = entry["cache_read_tokens"] / total
@@ -307,12 +328,15 @@ def build_diagnosis_report(conn, period="day", since=None, days=30, today=None, 
     resolved_since = _resolve_since(period, since, today=today)
 
     mcp_metrics = build_mcp_bottleneck_metrics(conn, since=resolved_since)
+    native_metrics = build_native_category_metrics(conn, since=resolved_since)
     session_metrics = build_session_outlier_metrics(conn, period=period, since=resolved_since)
     anomaly_report = build_insight_report(conn, days=days, today=today)
 
     sections = []
     if mcp_metrics:
         sections.append(format_mcp_bottleneck(mcp_metrics))
+    if native_metrics:
+        sections.append(format_native_category_breakdown(native_metrics))
     if session_metrics:
         sections.append(format_session_outliers(session_metrics))
     if anomaly_report:

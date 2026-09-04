@@ -116,6 +116,32 @@ def extract_mcp_server(tool_names):
     return next(iter(servers))
 
 
+# Ordered highest-priority-first: a turn calling both Task and Read is
+# classified "subagente", not "exploracao" -- dispatching a subagent is the
+# more expensive/actionable signal even if it also read a file.
+NATIVE_CATEGORY_PRIORITY = [
+    ("subagente", {"Task"}),
+    ("skill", {"Skill"}),
+    ("codigo", {"Write", "Edit", "NotebookEdit"}),
+    ("shell", {"Bash"}),
+    ("web", {"WebFetch", "WebSearch"}),
+    ("exploracao", {"Read", "Grep", "Glob"}),
+    ("planejamento", {"TodoWrite", "ExitPlanMode", "EnterPlanMode", "AskUserQuestion"}),
+]
+
+
+def extract_native_category(tool_names):
+    if not tool_names:
+        return "sem_ferramenta"
+    names = {n for n in tool_names.split(",") if not n.startswith("mcp__")}
+    if not names:
+        return "sem_ferramenta"
+    for label, tools in NATIVE_CATEGORY_PRIORITY:
+        if names & tools:
+            return label
+    return "outro"
+
+
 def query_mcp_server_report(conn, since=None):
     where, params = _where_clause(since)
     sql = f"""
@@ -156,6 +182,75 @@ def query_mcp_server_report(conn, since=None):
         results.append(entry)
     results.sort(key=lambda r: -r["total_tokens"])
     return results
+
+
+def query_native_category_report(conn, since=None):
+    where, params = _where_clause(since)
+    sql = f"""
+        SELECT tool_names, model, inference_geo,
+               input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+        FROM usage_events
+        {where}
+    """
+    buckets = {}
+    for row in _rows(conn, sql, params):
+        if extract_mcp_server(row["tool_names"]) != "native":
+            continue
+        label = extract_native_category(row["tool_names"])
+        entry = buckets.setdefault(label, {
+            "bucket": label,
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_creation_tokens": 0, "cache_read_tokens": 0,
+            "cost_usd": 0.0, "cost_unknown": False,
+        })
+        entry["input_tokens"] += row["input_tokens"]
+        entry["output_tokens"] += row["output_tokens"]
+        entry["cache_creation_tokens"] += row["cache_creation_tokens"]
+        entry["cache_read_tokens"] += row["cache_read_tokens"]
+        cost = pricing.estimate_cost_usd(
+            row["model"], row["input_tokens"], row["output_tokens"],
+            row["cache_creation_tokens"], row["cache_read_tokens"],
+            inference_geo=row["inference_geo"],
+        )
+        if cost is None:
+            entry["cost_unknown"] = True
+        else:
+            entry["cost_usd"] += cost
+
+    results = []
+    for entry in buckets.values():
+        entry["total_tokens"] = (
+            entry["input_tokens"] + entry["output_tokens"]
+            + entry["cache_creation_tokens"] + entry["cache_read_tokens"]
+        )
+        results.append(entry)
+    results.sort(key=lambda r: -r["total_tokens"])
+    return results
+
+
+NATIVE_CATEGORY_LABELS = {
+    "subagente": "subagentes (Task)",
+    "skill": "skills/plugins",
+    "codigo": "escrita de código (Write/Edit/NotebookEdit)",
+    "shell": "shell (Bash)",
+    "web": "web (WebFetch/WebSearch)",
+    "exploracao": "exploração (Read/Grep/Glob)",
+    "planejamento": "planejamento (TodoWrite/plan mode/perguntas)",
+    "outro": "outras ferramentas nativas",
+    "sem_ferramenta": "sem ferramenta (só texto)",
+}
+
+
+def format_native_category_report(rows):
+    if not rows:
+        return "Sem dados no período."
+    header = f"{'Categoria nativa':<40} {'Tokens':>12} {'Custo($)':>10}"
+    lines = [header]
+    for r in rows:
+        cost = "N/D" if r["cost_unknown"] else f"{r['cost_usd']:.4f}"
+        label = NATIVE_CATEGORY_LABELS.get(r["bucket"], r["bucket"])
+        lines.append(f"{label:<40} {r['total_tokens']:>12} {cost:>10}")
+    return "\n".join(lines)
 
 
 def format_report(rows):
@@ -217,6 +312,7 @@ def parse_args(argv=None):
     parser.add_argument("--since", default=None)
     parser.add_argument("--db", default=str(db.DEFAULT_DB_PATH))
     parser.add_argument("--mcp-servers", dest="mcp_servers", action="store_true")
+    parser.add_argument("--native-categories", dest="native_categories", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -227,6 +323,12 @@ def main(argv=None):
     if args.mcp_servers:
         rows = query_mcp_server_report(conn, since=args.since)
         print(format_mcp_server_report(rows))
+        conn.close()
+        return
+
+    if args.native_categories:
+        rows = query_native_category_report(conn, since=args.since)
+        print(format_native_category_report(rows))
         conn.close()
         return
 

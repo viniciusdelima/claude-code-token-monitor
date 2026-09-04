@@ -240,6 +240,46 @@ def test_build_mcp_bottleneck_metrics_none_without_data(tmp_path):
     conn.close()
 
 
+def test_build_native_category_metrics_groups_native_turns_only(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    _seed(conn, [
+        ("u1", "s1", "proj", "/p", "2026-09-04T10:00:00Z", 1000, 100, 0, 0, "mcp__jira__search"),
+        ("u2", "s1", "proj", "/p", "2026-09-04T11:00:00Z", 500, 50, 0, 0, "Write"),
+        ("u3", "s1", "proj", "/p", "2026-09-04T12:00:00Z", 300, 30, 0, 0, "Task"),
+    ])
+
+    metrics = insights.build_native_category_metrics(conn)
+
+    buckets = {r["bucket"] for r in metrics["rows"]}
+    assert "jira" not in buckets
+    assert buckets == {"codigo", "subagente"}
+    text = insights.format_native_category_breakdown(metrics)
+    assert "escrita de código" in text
+    assert "subagentes (Task)" in text
+    conn.close()
+
+
+def test_build_native_category_metrics_none_without_data(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    assert insights.build_native_category_metrics(conn) is None
+    conn.close()
+
+
+def test_build_diagnosis_report_includes_native_category_breakdown(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    _seed(conn, [
+        ("u1", "s1", "proj", "/p", "2026-09-04T10:00:00Z", 1000, 100, 0, 0, "Task"),
+    ])
+
+    report_text = insights.build_diagnosis_report(
+        conn, period="day", since="2026-09-04", today="2026-09-04", persist=False
+    )
+
+    assert "Gargalo dentro do nativo" in report_text
+    assert "subagentes (Task)" in report_text
+    conn.close()
+
+
 def test_session_bottleneck_reason_cache_read_heavy():
     entry = {"total_tokens": 1000, "cache_read_tokens": 900, "cache_creation_tokens": 50, "output_tokens": 50}
     assert "clear" in insights.session_bottleneck_reason(entry)

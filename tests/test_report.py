@@ -197,6 +197,102 @@ def test_format_mcp_server_report_handles_empty_rows():
     assert report.format_mcp_server_report([]) == "Sem dados no período."
 
 
+def test_extract_native_category_no_tools_is_sem_ferramenta():
+    assert report.extract_native_category("") == "sem_ferramenta"
+    assert report.extract_native_category(None) == "sem_ferramenta"
+
+
+def test_extract_native_category_task_is_subagente():
+    assert report.extract_native_category("Task") == "subagente"
+
+
+def test_extract_native_category_skill_takes_priority_over_exploration():
+    assert report.extract_native_category("Read,Skill") == "skill"
+
+
+def test_extract_native_category_subagente_takes_priority_over_code():
+    assert report.extract_native_category("Write,Task") == "subagente"
+
+
+def test_extract_native_category_write_edit_is_codigo():
+    assert report.extract_native_category("Write") == "codigo"
+    assert report.extract_native_category("Edit") == "codigo"
+    assert report.extract_native_category("NotebookEdit") == "codigo"
+
+
+def test_extract_native_category_bash_is_shell():
+    assert report.extract_native_category("Bash") == "shell"
+
+
+def test_extract_native_category_web_tools():
+    assert report.extract_native_category("WebFetch") == "web"
+    assert report.extract_native_category("WebSearch") == "web"
+
+
+def test_extract_native_category_read_grep_glob_is_exploracao():
+    assert report.extract_native_category("Read,Grep,Glob") == "exploracao"
+
+
+def test_extract_native_category_plan_tools_is_planejamento():
+    assert report.extract_native_category("TodoWrite") == "planejamento"
+    assert report.extract_native_category("AskUserQuestion") == "planejamento"
+
+
+def test_extract_native_category_unmapped_tool_is_outro():
+    assert report.extract_native_category("SomeFutureTool") == "outro"
+
+
+def test_extract_native_category_ignores_mcp_tools():
+    # A turn already bucketed elsewhere as non-native shouldn't happen in
+    # practice (query_native_category_report filters those out first), but
+    # the classifier itself must still strip mcp__ names defensively.
+    assert report.extract_native_category("mcp__jira__search,Write") == "codigo"
+
+
+def test_query_native_category_report_excludes_mcp_turns_and_groups_natives(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    conn.executemany(
+        """
+        INSERT INTO usage_events
+        (uuid, session_id, project, cwd, timestamp, model,
+         input_tokens, output_tokens, cache_creation_tokens,
+         cache_read_tokens, thinking_tokens, tool_names)
+        VALUES (?, 's1', 'proj', '/p', '2026-09-01T10:00:00Z', 'claude-sonnet-5',
+                ?, 0, 0, 0, 0, ?)
+        """,
+        [
+            ("u1", 1_000_000, "mcp__jira__search"),
+            ("u2", 500_000, "Write"),
+            ("u3", 300_000, "Task"),
+            ("u4", 100_000, ""),
+        ],
+    )
+    conn.commit()
+
+    rows = report.query_native_category_report(conn)
+
+    buckets = {r["bucket"]: r for r in rows}
+    assert "jira" not in buckets  # mcp turn excluded entirely
+    assert buckets["codigo"]["input_tokens"] == 500_000
+    assert buckets["subagente"]["input_tokens"] == 300_000
+    assert buckets["sem_ferramenta"]["input_tokens"] == 100_000
+    conn.close()
+
+
+def test_format_native_category_report_uses_human_labels():
+    rows = [{
+        "bucket": "subagente", "total_tokens": 300_000, "cost_usd": 0.6,
+        "cost_unknown": False,
+    }]
+    output = report.format_native_category_report(rows)
+    assert "subagentes (Task)" in output
+    assert "300000" in output
+
+
+def test_format_native_category_report_handles_empty_rows():
+    assert report.format_native_category_report([]) == "Sem dados no período."
+
+
 def test_last_used_prefs_round_trip(tmp_path):
     prefs_path = tmp_path / "last_used.json"
     assert report.load_last_used(prefs_path) == {}
@@ -275,6 +371,7 @@ def test_parse_args_defaults():
     assert args.group_by is None
     assert args.since is None
     assert args.mcp_servers is False
+    assert args.native_categories is False
 
 
 def test_parse_args_explicit_flags_are_not_none():

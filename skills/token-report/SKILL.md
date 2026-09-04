@@ -15,13 +15,18 @@ Argumentos aceitos após `/token-report` (todos opcionais):
   de um servidor distinto no mesmo turno). Ignora `--period`/`--group-by`
   quando presente.
 - `--diagnose`: diagnóstico de gargalo — de onde vem o gasto (MCP externo vs
-  uso nativo/contexto), quais sessões do período estão acima da média (com
-  motivo provável: contexto acumulado, leitura grande num turno, ou resposta
-  longa) e a anomalia vs histórico de 30 dias. Cada execução salva um
-  snapshot local e mostra a comparação com o snapshot anterior do mesmo
-  `--period`, para acompanhar se o gargalo está piorando ou melhorando entre
-  execuções. Aceita `--period`/`--since` como o relatório normal (sem
-  `--since`, `--period day` usa o dia de hoje automaticamente).
+  uso nativo/contexto), dentro do nativo por tipo de uso (subagente/Task,
+  skill, escrita de código, shell, web, exploração, planejamento), quais
+  sessões do período estão acima da média (com motivo provável: contexto
+  acumulado, leitura grande num turno, ou resposta longa) e a anomalia vs
+  histórico de 30 dias. Cada execução salva um snapshot local e mostra a
+  comparação com o snapshot anterior do mesmo `--period`, para acompanhar se
+  o gargalo está piorando ou melhorando entre execuções. Aceita
+  `--period`/`--since` como o relatório normal (sem `--since`, `--period day`
+  usa o dia de hoje automaticamente).
+- `report.py --native-categories [--since <since>]`: só o recorte por tipo de
+  uso nativo (código/subagente/skill/shell/web/exploração/planejamento), sem
+  o resto do diagnóstico.
 - `insights.py --history [--period <period>]`: lista os snapshots de
   diagnóstico já salvos para o período dado (mais recente primeiro), para
   comparar entre execuções sem gerar um novo diagnóstico.
