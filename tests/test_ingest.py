@@ -37,7 +37,21 @@ def test_parse_line_extracts_assistant_with_usage():
         "cache_read_tokens": 0,
         "thinking_tokens": 83,
         "tool_names": "Read",
+        "inference_geo": None,
     }
+
+
+def test_parse_line_extracts_inference_geo_when_present():
+    line = json.dumps({
+        "type": "assistant", "uuid": "u1", "sessionId": "s1",
+        "cwd": "/home/dev/myproject", "timestamp": "2026-09-04T20:00:00Z",
+        "message": {
+            "model": "claude-sonnet-5", "content": [],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "inference_geo": "us"},
+        },
+    })
+    event = ingest.parse_line(line)
+    assert event["inference_geo"] == "us"
 
 
 def test_parse_line_skips_non_assistant():
@@ -145,6 +159,29 @@ def test_ingest_file_derives_project_from_path_not_cwd(tmp_path):
         "SELECT project FROM usage_events WHERE uuid = 'uuid-drift'"
     ).fetchone()
     assert row == ("actual-project-dir",)  # not "that-does-not-match" from cwd
+    conn.close()
+
+
+def test_ingest_file_persists_inference_geo(tmp_path):
+    line = json.dumps({
+        "type": "assistant", "uuid": "uuid-geo", "sessionId": "sess-geo",
+        "cwd": "/home/dev/myproject", "timestamp": "2026-09-04T20:36:00.000Z",
+        "message": {
+            "model": "claude-sonnet-5", "content": [],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "inference_geo": "us"},
+        },
+    })
+    session_path = tmp_path / "geo_session.jsonl"
+    session_path.write_text(line + "\n")
+
+    db_path = tmp_path / "usage.db"
+    conn = db.get_connection(db_path)
+    ingest.ingest_file(conn, session_path)
+
+    row = conn.execute(
+        "SELECT inference_geo FROM usage_events WHERE uuid = 'uuid-geo'"
+    ).fetchone()
+    assert row == ("us",)
     conn.close()
 
 

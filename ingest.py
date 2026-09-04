@@ -49,6 +49,7 @@ def parse_line(line):
         "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
         "thinking_tokens": thinking,
         "tool_names": extract_tool_names(message.get("content") or []),
+        "inference_geo": usage.get("inference_geo"),
     }
 
 
@@ -70,8 +71,8 @@ def ingest_file(conn, path):
                     INSERT OR IGNORE INTO usage_events
                     (uuid, session_id, project, cwd, timestamp, model,
                      input_tokens, output_tokens, cache_creation_tokens,
-                     cache_read_tokens, thinking_tokens, tool_names)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     cache_read_tokens, thinking_tokens, tool_names, inference_geo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event["uuid"], event["session_id"], event["project"],
@@ -79,6 +80,7 @@ def ingest_file(conn, path):
                         event["input_tokens"], event["output_tokens"],
                         event["cache_creation_tokens"], event["cache_read_tokens"],
                         event["thinking_tokens"], event["tool_names"],
+                        event["inference_geo"],
                     ),
                 )
                 inserted += cur.rowcount
