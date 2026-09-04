@@ -130,8 +130,15 @@ o script. Atualização é manual — sem chamada de API de preço (YAGNI).
 
 - Pega série diária dos últimos 30 dias (soma de `context_size` +
   `output_tokens` por dia, a partir de `usage_events`).
-- **≥7 dias de histórico:** z-score por dimensão (input/output/cache
-  separado) — `(hoje - média)/desvio`; `|z| > 2` → sinaliza anomalia.
+- **≥7 dias de histórico:** z-score sobre essa série única combinada —
+  `(hoje - média)/desvio`; `|z| > 2` → sinaliza anomalia.
+- **Decisão de v1 (revisão final, 2026-09-04):** a ideia original de rodar
+  z-score **separado por dimensão** (input/output/cache cada com sua própria
+  série e seu próprio limiar) foi simplificada pra uma série única combinada
+  em v1 — decisão deliberada, não bug. Custo: um dia com pico isolado só em
+  `output_tokens` (muita geração, contexto normal) pode não disparar
+  anomalia, já que ele se dilui na soma. Detecção por dimensão fica pra v2,
+  se o uso real deste mês mostrar que faz falta.
 - **<7 dias de histórico:** regra fixa de fallback — dia atual > 1.5x a
   média móvel disponível (mesmo com poucos pontos).
 - Motivo textual por dimensão dominante:
@@ -156,6 +163,8 @@ Cron diário roda `ingest.py` sozinho:
 ```
 Skill `/token-report` roda `report.py` + `insights.py` (dado já ingerido).
 `ingest.py` também pode ser rodado manual a qualquer momento (idempotente).
+
+**Caveat (revisão final, 2026-09-04):** o redirecionamento `>> ~/.claude/token-monitor/ingest.log` é feito pelo shell do cron *antes* do Python rodar — se `~/.claude/token-monitor/` ainda não existir numa máquina nova, esse redirect falha e o cron nunca chega a rodar `ingest.py` (que criaria o diretório sozinho via `mkdir(parents=True)`). Inofensivo aqui (diretório já existe), mas se replicar esse setup numa máquina nova: crie o diretório antes de adicionar a entrada no cron (`mkdir -p ~/.claude/token-monitor`), ou rode `ingest.py` manual uma vez primeiro.
 
 ## 11. Interface (skill)
 
