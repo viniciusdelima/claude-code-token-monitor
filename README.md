@@ -39,8 +39,13 @@ cp skills/token-report/SKILL.md ~/.claude/skills/token-report/SKILL.md
 ```bash
 python3 ingest.py                                   # ingere dados novos (idempotente)
 python3 report.py --period week --group-by project   # relatório
+python3 report.py --mcp-servers                      # custo/tokens por MCP server
 python3 insights.py                                  # checa anomalia nos últimos 30 dias
 ```
+
+Se você não passar `--period`/`--group-by`, `report.py` reusa o último valor
+que você passou (salvo em `~/.claude/token-monitor/last_used.json`) — só cai
+pro default (`day`/`day`) se nunca tiver rodado antes.
 
 Ou, dentro do Claude Code, depois de instalar a skill:
 

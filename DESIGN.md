@@ -57,7 +57,7 @@ Skill pessoal `~/.claude/skills/token-report/SKILL.md` chama os scripts via
 CREATE TABLE usage_events (
   uuid TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
-  project TEXT NOT NULL,          -- derivado de cwd
+  project TEXT NOT NULL,          -- derivado do diretório real do arquivo JSONL, não de cwd
   cwd TEXT NOT NULL,
   timestamp TEXT NOT NULL,        -- ISO8601 UTC, ex: 2026-09-04T20:31:32.706Z
   model TEXT,
@@ -66,7 +66,8 @@ CREATE TABLE usage_events (
   cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   thinking_tokens INTEGER NOT NULL DEFAULT 0,
-  tool_names TEXT                 -- CSV dos nomes de tool_use naquele turno, ex: "Read,Bash"
+  tool_names TEXT,                -- CSV dos nomes de tool_use naquele turno, ex: "Read,Bash"
+  inference_geo TEXT              -- ex: "us" (data residency, cobrado a 1.1x); adicionado via ALTER TABLE em bancos existentes
 );
 CREATE INDEX idx_usage_ts ON usage_events(timestamp);
 CREATE INDEX idx_usage_session ON usage_events(session_id);
@@ -192,3 +193,31 @@ houver anomalia no período, anexa a seção de insights com evidência.
   fragmentado. Aceito como ponto de expansão futura, não bloqueia o V1.
 - **Sem conteúdo bruto de tool call na evidência** — trade-off deliberado
   entre riqueza de diagnóstico e risco de exposição de segredo.
+
+## 14. V2 — ganhos baratos implementados (2026-09-04)
+
+Levantamento completo em [`IMPROVEMENTS.md`](IMPROVEMENTS.md) (comparação com
+[Claude-Code-Usage-Monitor](https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor)
+e documentação oficial do Claude Code). Dos itens priorizados como "ganhos
+baratos", os 4 abaixo foram implementados:
+
+- **Multiplicador de data residency (1.1x):** `usage.inference_geo` do JSONL
+  é capturado e persistido; `pricing.estimate_cost_usd` aplica 1.1x quando
+  `inference_geo == "us"`. `report.py` agrupa custo por `(bucket, model,
+  inference_geo)` antes de somar, pra não diluir a taxa quando o mesmo modelo
+  aparece com e sem residência de dados no mesmo período.
+- **Relatório por MCP server:** `report.py --mcp-servers` — atribui cada
+  evento a 1 servidor MCP (convenção `mcp__<server>__<tool>` em
+  `tool_names`), a `"native"` se só usou ferramenta nativa, ou a `"mixed"`
+  se tocou mais de um servidor distinto no mesmo turno (evita duplicar total
+  entre buckets).
+- **Lembrar último `--period`/`--group-by`:** `~/.claude/token-monitor/last_used.json`.
+  Se a flag não é passada explicitamente, usa o último valor salvo (default
+  `None` no argparse, não mais `"day"` fixo); CLI explícito sempre tem
+  prioridade sobre o salvo.
+- **`modelPricing` de managed settings:** `pricing.py` lê
+  `/etc/claude-code/managed-settings.json` (escopo *Managed* do Claude
+  Code — confirmado na doc oficial, não fica em `~/.claude/settings.json`)
+  se existir; aplica `overrides` por modelo e depois `multiplier` geral,
+  igual ao comportamento nativo do `/usage`. Cai pra tabela estática se o
+  arquivo não existir (caso desta máquina hoje).
