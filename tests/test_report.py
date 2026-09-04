@@ -125,6 +125,9 @@ def test_format_report_renders_a_row():
     output = report.format_report(rows)
     assert "2026-09-01" in output
     assert "165" in output
+    # per-category token columns (DESIGN.md §7)
+    assert "Input" in output and "Output" in output
+    assert "CacheEscrita" in output and "CacheLeitura" in output
 
 
 def test_parse_args_defaults():

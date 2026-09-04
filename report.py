@@ -101,13 +101,19 @@ def query_report(conn, period="day", group_by="day", since=None):
 def format_report(rows):
     if not rows:
         return "Sem dados no período."
-    header = f"{'Período':<14} {'Tokens':>10} {'Custo($)':>10} {'Conversas':>10} {'CtxMédio':>10} {'CtxPico':>10}"
+    header = (
+        f"{'Período':<14} {'Tokens':>10} {'Custo($)':>10} {'Conversas':>10} "
+        f"{'CtxMédio':>10} {'CtxPico':>10} {'Input':>10} {'Output':>10} "
+        f"{'CacheEscrita':>14} {'CacheLeitura':>14}"
+    )
     lines = [header]
     for r in rows:
         cost = "N/D" if r["cost_unknown"] else f"{r['cost_usd']:.4f}"
         lines.append(
             f"{r['bucket']:<14} {r['total_tokens']:>10} {cost:>10} "
-            f"{r['session_count']:>10} {r['avg_context']:>10.0f} {r['peak_context']:>10}"
+            f"{r['session_count']:>10} {r['avg_context']:>10.0f} {r['peak_context']:>10} "
+            f"{r['input_tokens']:>10} {r['output_tokens']:>10} "
+            f"{r['cache_creation_tokens']:>14} {r['cache_read_tokens']:>14}"
         )
     return "\n".join(lines)
 
