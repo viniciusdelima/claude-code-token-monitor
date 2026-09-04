@@ -5,7 +5,7 @@ statusline (traz session_id e context_window), ingere só o suficiente pra
 manter o contador vivo sem reprocessar tudo a cada render, e imprime uma
 linha curta tipo:
 
-    🔥 tokens totais hoje 128k | 💬 tokens nesta sessão 12k | 🧠 contexto atual 94.7k/1000k (9%)
+    🔥 TOKENS TOTAIS HOJE 128k | 💬 TOKENS NESTA SESSÃO 12k | 🧠 CONTEXTO ATUAL 94.7k/1000k (9%)
 
 Cores (ANSI 256) e ícone de contexto mudam de verde -> amarelo -> vermelho
 conforme a % de uso, pra chamar atenção quando a janela está enchendo.
@@ -111,7 +111,7 @@ def _context_part(payload):
     else:
         color = COLOR_CTX_LOW
 
-    text = f"🧠 contexto atual {_fmt(used)}/{_fmt(size)}{pct_str}"
+    text = f"🧠 CONTEXTO ATUAL {_fmt(used)}/{_fmt(size)}{pct_str}"
 
     return _color(color, text)
 
@@ -139,8 +139,8 @@ def main():
         return
 
     parts = [
-        _color(COLOR_TODAY, f"🔥 tokens totais hoje {_fmt(today_total)}"),
-        _color(COLOR_SESSION, f"💬 tokens nesta sessão {_fmt(session_total)}"),
+        _color(COLOR_TODAY, f"🔥 TOKENS TOTAIS HOJE {_fmt(today_total)}"),
+        _color(COLOR_SESSION, f"💬 TOKENS NESTA SESSÃO {_fmt(session_total)}"),
     ]
     ctx_part = _context_part(payload)
     if ctx_part:
