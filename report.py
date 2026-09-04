@@ -1,4 +1,5 @@
 import argparse
+import json
 from pathlib import Path
 
 import db
@@ -11,6 +12,8 @@ PERIOD_FORMATS = {
 }
 
 CONTEXT_SIZE_EXPR = "(input_tokens + cache_creation_tokens + cache_read_tokens)"
+
+DEFAULT_PREFS_PATH = Path.home() / ".claude" / "token-monitor" / "last_used.json"
 
 
 def _bucket_expr(period, group_by):
@@ -47,14 +50,14 @@ def query_report(conn, period="day", group_by="day", since=None):
         GROUP BY bucket
     """
     token_sql = f"""
-        SELECT {bucket_expr} AS bucket, model,
+        SELECT {bucket_expr} AS bucket, model, inference_geo,
                SUM(input_tokens) AS input_tokens,
                SUM(output_tokens) AS output_tokens,
                SUM(cache_creation_tokens) AS cache_creation_tokens,
                SUM(cache_read_tokens) AS cache_read_tokens
         FROM usage_events
         {where}
-        GROUP BY bucket, model
+        GROUP BY bucket, model, inference_geo
     """
 
     buckets = {}
@@ -81,6 +84,7 @@ def query_report(conn, period="day", group_by="day", since=None):
         cost = pricing.estimate_cost_usd(
             row["model"], row["input_tokens"], row["output_tokens"],
             row["cache_creation_tokens"], row["cache_read_tokens"],
+            inference_geo=row["inference_geo"],
         )
         if cost is None:
             entry["cost_unknown"] = True
@@ -95,6 +99,62 @@ def query_report(conn, period="day", group_by="day", since=None):
         )
         results.append(entry)
     results.sort(key=lambda r: r["bucket"])
+    return results
+
+
+def extract_mcp_server(tool_names):
+    if not tool_names:
+        return "native"
+    servers = set()
+    for name in tool_names.split(","):
+        if name.startswith("mcp__"):
+            servers.add(name[len("mcp__"):].rsplit("__", 1)[0])
+    if not servers:
+        return "native"
+    if len(servers) > 1:
+        return "mixed"
+    return next(iter(servers))
+
+
+def query_mcp_server_report(conn, since=None):
+    where, params = _where_clause(since)
+    sql = f"""
+        SELECT tool_names, model, inference_geo,
+               input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+        FROM usage_events
+        {where}
+    """
+    buckets = {}
+    for row in _rows(conn, sql, params):
+        label = extract_mcp_server(row["tool_names"])
+        entry = buckets.setdefault(label, {
+            "bucket": label,
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_creation_tokens": 0, "cache_read_tokens": 0,
+            "cost_usd": 0.0, "cost_unknown": False,
+        })
+        entry["input_tokens"] += row["input_tokens"]
+        entry["output_tokens"] += row["output_tokens"]
+        entry["cache_creation_tokens"] += row["cache_creation_tokens"]
+        entry["cache_read_tokens"] += row["cache_read_tokens"]
+        cost = pricing.estimate_cost_usd(
+            row["model"], row["input_tokens"], row["output_tokens"],
+            row["cache_creation_tokens"], row["cache_read_tokens"],
+            inference_geo=row["inference_geo"],
+        )
+        if cost is None:
+            entry["cost_unknown"] = True
+        else:
+            entry["cost_usd"] += cost
+
+    results = []
+    for entry in buckets.values():
+        entry["total_tokens"] = (
+            entry["input_tokens"] + entry["output_tokens"]
+            + entry["cache_creation_tokens"] + entry["cache_read_tokens"]
+        )
+        results.append(entry)
+    results.sort(key=lambda r: -r["total_tokens"])
     return results
 
 
@@ -118,19 +178,63 @@ def format_report(rows):
     return "\n".join(lines)
 
 
+def format_mcp_server_report(rows):
+    if not rows:
+        return "Sem dados no período."
+    header = f"{'MCP server':<40} {'Tokens':>12} {'Custo($)':>10}"
+    lines = [header]
+    for r in rows:
+        cost = "N/D" if r["cost_unknown"] else f"{r['cost_usd']:.4f}"
+        lines.append(f"{r['bucket']:<40} {r['total_tokens']:>12} {cost:>10}")
+    return "\n".join(lines)
+
+
+def load_last_used(path=DEFAULT_PREFS_PATH):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_last_used(prefs, path=DEFAULT_PREFS_PATH):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(prefs, f)
+
+
+def resolve_args(period, group_by, since, prefs):
+    resolved_period = period or prefs.get("period") or "day"
+    resolved_group_by = group_by or prefs.get("group_by") or "day"
+    resolved_since = since if since is not None else prefs.get("since")
+    return resolved_period, resolved_group_by, resolved_since
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Relatório de tokens do Claude Code")
-    parser.add_argument("--period", choices=["day", "week", "month"], default="day")
-    parser.add_argument("--group-by", dest="group_by", choices=["day", "session", "project"], default="day")
+    parser.add_argument("--period", choices=["day", "week", "month"], default=None)
+    parser.add_argument("--group-by", dest="group_by", choices=["day", "session", "project"], default=None)
     parser.add_argument("--since", default=None)
     parser.add_argument("--db", default=str(db.DEFAULT_DB_PATH))
+    parser.add_argument("--mcp-servers", dest="mcp_servers", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv)
     conn = db.get_connection(Path(args.db))
-    rows = query_report(conn, period=args.period, group_by=args.group_by, since=args.since)
+
+    if args.mcp_servers:
+        rows = query_mcp_server_report(conn, since=args.since)
+        print(format_mcp_server_report(rows))
+        conn.close()
+        return
+
+    prefs = load_last_used()
+    period, group_by, since = resolve_args(args.period, args.group_by, args.since, prefs)
+    save_last_used({"period": period, "group_by": group_by, "since": since})
+
+    rows = query_report(conn, period=period, group_by=group_by, since=since)
     print(format_report(rows))
     conn.close()
 
