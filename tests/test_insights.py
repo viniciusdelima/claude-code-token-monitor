@@ -1,4 +1,89 @@
 import insights
+import db
+
+
+def _seed(conn, rows):
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO usage_events
+            (uuid, session_id, project, cwd, timestamp, model,
+             input_tokens, output_tokens, cache_creation_tokens,
+             cache_read_tokens, thinking_tokens, tool_names)
+            VALUES (?, ?, ?, ?, ?, 'claude-sonnet-5', ?, ?, ?, ?, 0, ?)
+            """,
+            row,
+        )
+    conn.commit()
+
+
+def test_daily_context_series_sums_per_day(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    _seed(conn, [
+        ("u1", "s1", "proj", "/p", "2026-09-01T10:00:00Z", 100, 0, 10, 5, "Read"),
+        ("u2", "s1", "proj", "/p", "2026-09-01T12:00:00Z", 200, 0, 20, 10, "Bash"),
+    ])
+
+    series = insights.daily_context_series(conn, days=30)
+
+    assert series == [("2026-09-01", 345.0)]  # (100+10+5)+(200+20+10)
+    conn.close()
+
+
+def test_top_context_events_orders_by_context_size_desc(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    _seed(conn, [
+        ("u1", "s1", "wiseup-plus", "/home/v/wiser/wiseup-plus", "2026-09-04T10:00:00Z", 10, 0, 5, 0, "Read"),
+        ("u2", "s2", "wiseup-plus", "/home/v/wiser/wiseup-plus", "2026-09-04T11:00:00Z", 100, 0, 50, 0, "Bash"),
+    ])
+
+    events = insights.top_context_events(conn, "2026-09-04", limit=5)
+
+    assert len(events) == 2
+    assert events[0]["session_id"] == "s2"  # 150 > 15
+    assert events[0]["context_size"] == 150
+    conn.close()
+
+
+def test_dominant_reason_cache_creation_heavy():
+    event = {"cache_creation_tokens": 100, "cache_read_tokens": 10}
+    assert "contexto cresceu" in insights.dominant_reason(event)
+
+
+def test_dominant_reason_cache_read_heavy():
+    event = {"cache_creation_tokens": 10, "cache_read_tokens": 100}
+    assert "acumulado" in insights.dominant_reason(event)
+
+
+def test_jsonl_path_for_replaces_slashes_in_cwd():
+    event = {"cwd": "/home/viniciusdelima/wiser/wiseup-plus", "session_id": "abc"}
+    path = insights.jsonl_path_for(event)
+    assert path.endswith("/.claude/projects/-home-viniciusdelima-wiser-wiseup-plus/abc.jsonl")
+
+
+def test_build_insight_report_returns_none_without_anomaly(tmp_path):
+    conn = db.get_connection(tmp_path / "usage.db")
+    _seed(conn, [
+        ("u1", "s1", "proj", "/p", "2026-09-04T10:00:00Z", 100, 0, 0, 0, ""),
+    ])
+
+    assert insights.build_insight_report(conn) is None
+    conn.close()
+
+
+def test_build_insight_report_includes_evidence_on_anomaly(tmp_path, monkeypatch):
+    conn = db.get_connection(tmp_path / "usage.db")
+    rows = []
+    for day in range(1, 8):
+        rows.append((f"u{day}", f"s{day}", "proj", "/p", f"2026-08-0{day}T10:00:00Z", 100, 0, 0, 0, ""))
+    rows.append(("u-spike", "s-spike", "proj", "/p", "2026-09-01T10:00:00Z", 5000, 0, 0, 0, "Read"))
+    _seed(conn, rows)
+
+    report = insights.build_insight_report(conn)
+
+    assert report is not None
+    assert "s-spike" in report
+    conn.close()
 
 
 def test_no_anomaly_with_less_than_two_points():
