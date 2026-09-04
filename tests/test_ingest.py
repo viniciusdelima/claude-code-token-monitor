@@ -27,8 +27,8 @@ def test_parse_line_extracts_assistant_with_usage():
     assert event == {
         "uuid": "uuid-1",
         "session_id": "sess-1",
-        "project": "wiseup-plus",
-        "cwd": "/home/viniciusdelima/wiser/wiseup-plus",
+        "project": "myproject",
+        "cwd": "/home/dev/myproject",
         "timestamp": "2026-09-04T20:31:32.706Z",
         "model": "claude-opus-4-7",
         "input_tokens": 6,
@@ -98,7 +98,7 @@ def test_iter_jsonl_files_finds_nested_files(tmp_path):
 
 def test_ingest_all_sums_across_files(tmp_path):
     projects_root = tmp_path / "projects"
-    proj_dir = projects_root / "wiseup-plus"
+    proj_dir = projects_root / "myproject"
     proj_dir.mkdir(parents=True)
     (proj_dir / "session.jsonl").write_text(FIXTURE.read_text())
 
@@ -157,7 +157,7 @@ def test_ingest_file_skips_line_with_null_required_field(tmp_path):
             "type": "assistant",
             "uuid": "uuid-bad",
             # no "sessionId" at all -> parse_line yields session_id=None
-            "cwd": "/home/viniciusdelima/wiser/wiseup-plus",
+            "cwd": "/home/dev/myproject",
             "timestamp": "2026-09-04T20:33:00.000Z",
             "message": {
                 "model": "claude-opus-4-7",
@@ -171,7 +171,7 @@ def test_ingest_file_skips_line_with_null_required_field(tmp_path):
             "type": "assistant",
             "uuid": "uuid-good",
             "sessionId": "sess-1",
-            "cwd": "/home/viniciusdelima/wiser/wiseup-plus",
+            "cwd": "/home/dev/myproject",
             "timestamp": "2026-09-04T20:34:00.000Z",
             "message": {
                 "model": "claude-opus-4-7",

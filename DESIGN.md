@@ -30,7 +30,7 @@ campos: `uuid` (único por mensagem), `sessionId`, `timestamp`, `cwd`,
 `output_tokens_details.thinking_tokens`), e `message.content` (array de
 blocos, incluindo `tool_use` com campo `name`).
 
-Confirmado via inspeção real de `~/.claude/projects/-home-viniciusdelima-wiser-wiseup-plus/*.jsonl`
+Confirmado via inspeção real de `~/.claude/projects/-home-dev-myproject/*.jsonl`
 em 2026-09-04.
 
 ## 4. Arquitetura

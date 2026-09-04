@@ -62,8 +62,8 @@ def test_daily_context_series_today_pins_the_lookback_window(tmp_path):
 def test_top_context_events_orders_by_context_size_desc(tmp_path):
     conn = db.get_connection(tmp_path / "usage.db")
     _seed(conn, [
-        ("u1", "s1", "wiseup-plus", "/home/v/wiser/wiseup-plus", "2026-09-04T10:00:00Z", 10, 0, 5, 0, "Read"),
-        ("u2", "s2", "wiseup-plus", "/home/v/wiser/wiseup-plus", "2026-09-04T11:00:00Z", 100, 0, 50, 0, "Bash"),
+        ("u1", "s1", "myproject", "/home/dev/myproject", "2026-09-04T10:00:00Z", 10, 0, 5, 0, "Read"),
+        ("u2", "s2", "myproject", "/home/dev/myproject", "2026-09-04T11:00:00Z", 100, 0, 50, 0, "Bash"),
     ])
 
     events = insights.top_context_events(conn, "2026-09-04", limit=5)
@@ -90,11 +90,11 @@ def test_jsonl_path_for_uses_project_field_not_cwd():
     # must not be used here, even if it disagrees with `project`.
     event = {
         "cwd": "/some/drifted/directory",
-        "project": "wiseup-plus",
+        "project": "myproject",
         "session_id": "abc",
     }
     path = insights.jsonl_path_for(event)
-    assert path.endswith("/.claude/projects/wiseup-plus/abc.jsonl")
+    assert path.endswith("/.claude/projects/myproject/abc.jsonl")
 
 
 def test_build_insight_report_returns_none_without_anomaly(tmp_path):
