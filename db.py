@@ -20,6 +20,21 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_events(project);
+
+CREATE TABLE IF NOT EXISTS diagnosis_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  generated_at TEXT NOT NULL,
+  period TEXT NOT NULL,
+  since TEXT,
+  total_tokens INTEGER NOT NULL,
+  native_share REAL NOT NULL,
+  top_external_server TEXT,
+  session_count INTEGER NOT NULL,
+  outlier_count INTEGER NOT NULL,
+  mean_session_tokens REAL NOT NULL,
+  report_text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_diagnosis_period_time ON diagnosis_snapshots(period, generated_at);
 """
 
 DEFAULT_DB_PATH = Path.home() / ".claude" / "token-monitor" / "usage.db"
