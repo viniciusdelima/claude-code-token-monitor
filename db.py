@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   thinking_tokens INTEGER NOT NULL DEFAULT 0,
   tool_names TEXT,
+  tool_detail TEXT,
   inference_geo TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(timestamp);
@@ -69,6 +70,7 @@ def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
         "ALTER TABLE usage_events ADD COLUMN inference_geo TEXT",
         "ALTER TABLE usage_events ADD COLUMN cache_creation_5m_tokens INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE usage_events ADD COLUMN cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE usage_events ADD COLUMN tool_detail TEXT",
     ):
         try:
             conn.execute(ddl)
