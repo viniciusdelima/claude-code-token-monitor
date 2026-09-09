@@ -40,6 +40,34 @@ Argumentos aceitos após `/token-report` (todos opcionais):
 - `insights.py --history [--period <period>]`: lista os snapshots de
   diagnóstico já salvos para o período dado (mais recente primeiro), para
   comparar entre execuções sem gerar um novo diagnóstico.
+- `--setup-statusline`: configura (ou reconfigura) o contador no statusline
+  sem gerar relatório nenhum. Roda
+  `python3 ~/.claude/tools/token-monitor/setup_statusline.py` e mostra a
+  saída ao usuário.
+
+## Statusline (contador no rodapé)
+
+Na primeira vez que este skill for usado nesta máquina (ou sempre que o
+usuário pedir explicitamente `--setup-statusline` / "configura o statusline"
+/ "mostra os tokens no rodapé"), rode, antes de qualquer outro passo:
+
+`python3 ~/.claude/tools/token-monitor/setup_statusline.py`
+
+Esse script é idempotente e seguro rodar de novo — se o statusline já está
+configurado, ele só confirma e não mexe em nada; senão, cria/ajusta
+`~/.claude/hooks/combined-statusline.sh` (com backup `.bak` se já existir
+algo lá) e aponta `statusLine` do `~/.claude/settings.json` pra ele (também
+com backup). Isso liga um contador no rodapé do Claude Code com:
+- 🔥 tokens totais gastos hoje
+- 💬 tokens gastos nesta sessão
+- 🧠 tamanho da janela de contexto atual (usado/total e %), em verde
+  (<80k tokens), amarelo (80k–120k) ou vermelho (≥120k)
+
+Se o usuário só pediu o relatório normal (sem mencionar statusline), não
+rode esse setup automaticamente toda vez — só na primeira execução deste
+skill na sessão/máquina (detectável perguntando ao usuário ou checando se
+`~/.claude/hooks/combined-statusline.sh` já existe e menciona
+`token-monitor`/`statusline.py`) ou quando pedido explicitamente.
 
 ## Benchmark do baseline do harness
 
