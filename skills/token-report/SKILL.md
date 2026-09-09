@@ -17,19 +17,26 @@ Argumentos aceitos após `/token-report` (todos opcionais):
   agrupado por servidor MCP (`native` = só ferramenta nativa, `mixed` = mais
   de um servidor distinto no mesmo turno). Ignora `--period`/`--group-by`
   quando presente.
-- `--diagnose`: diagnóstico de gargalo — de onde vem o gasto (MCP externo vs
-  uso nativo/contexto), dentro do nativo por tipo de uso (subagente/Task,
-  skill, escrita de código, shell, web, exploração, planejamento), quais
-  sessões do período estão acima da média (com motivo provável: contexto
-  acumulado, leitura grande num turno, ou resposta longa) e a anomalia vs
-  histórico de 30 dias. Cada execução salva um snapshot local e mostra a
-  comparação com o snapshot anterior do mesmo `--period`, para acompanhar se
-  o gargalo está piorando ou melhorando entre execuções. Aceita
-  `--period`/`--since` como o relatório normal (sem `--since`, `--period day`
-  usa o dia de hoje automaticamente).
-- `report.py --native-categories [--since <since>]`: só o recorte por tipo de
-  uso nativo (código/subagente/skill/shell/web/exploração/planejamento), sem
-  o resto do diagnóstico.
+- `--diagnose`: diagnóstico de gargalo em duas perspectivas complementares:
+  1. **tokens processados/custo por tipo de inferência** — MCP externo vs uso
+     nativo/contexto e, dentro do nativo, subagente/Task, skill, escrita de
+     código, shell, web, exploração e planejamento. Essa visão atribui todo o
+     contexto processado da inferência à categoria daquele turno; portanto
+     "sem ferramenta" não significa que texto puro gerou todos aqueles tokens.
+  2. **crescimento efetivo da janela de contexto** — mede o delta positivo
+     entre inferências consecutivas da mesma sessão e atribui o delta ao turno
+     anterior. A primeira inferência é baseline e deltas negativos de
+     `/clear`/compactação são reportados separadamente, sem reduzir o crescimento
+     positivo. A atribuição é observacional (turno precedente), não proveniência
+     byte a byte.
+  Também mostra sessões do período acima da média e a anomalia vs histórico de
+  30 dias. Cada execução salva um snapshot local do diagnóstico principal e
+  mostra a comparação com o snapshot anterior do mesmo `--period`.
+- `report.py --native-categories [--since <since>]`: só o recorte de tokens
+  processados por tipo de inferência nativa, sem o resto do diagnóstico.
+- `context_growth.py [--period <period>] [--since <since>]`: só o crescimento
+  efetivo da janela de contexto por origem/turno precedente, incluindo os
+  maiores saltos observados.
 - `insights.py --history [--period <period>]`: lista os snapshots de
   diagnóstico já salvos para o período dado (mais recente primeiro), para
   comparar entre execuções sem gerar um novo diagnóstico.
@@ -53,12 +60,20 @@ O benchmark mede somente a primeira inferência da sessão (`input + cache write
 2. Se o usuário pediu diagnóstico/gargalo/insights de redução (ex: "onde está
    o gargalo", "estou gastando acima da média", "como reduzir tokens"):
    - Histórico de execuções anteriores: `python3 ~/.claude/tools/token-monitor/insights.py --history [--period <period>]`
-   - Novo diagnóstico (gera e persiste um snapshot, mostrando a comparação
-     com o snapshot anterior do mesmo período):
+   - Novo diagnóstico principal (gera e persiste snapshot):
      `python3 ~/.claude/tools/token-monitor/insights.py --diagnose [--period <period>] [--since <since>]`
-   - Apresente a saída completa (gargalo MCP/nativo, sessões acima da média
-     com motivo, anomalia, comparação com execução anterior) sem resumir os
-     números. Pule os passos 3-5 abaixo.
+   - Crescimento efetivo da janela (não persiste snapshot):
+     `python3 ~/.claude/tools/token-monitor/context_growth.py [--period <period>] [--since <since>]`
+   - Apresente **as duas saídas completas**, em seções separadas:
+     - `Tokens processados / custo por tipo de inferência`
+     - `Crescimento efetivo da janela de contexto`
+   - Não descreva a categoria `sem ferramenta` como "texto gerado" ou como
+     causa direta de crescimento; ela significa apenas que não havia
+     ferramenta registrada naquela inferência.
+   - No crescimento efetivo, deixe claro que o delta é atribuído ao turno
+     anterior e pode combinar resposta do Claude, resultado de tool e novo
+     input do usuário.
+   - Pule os passos 3-5 abaixo.
 
 3. Senão, gerar o relatório:
    - Se o usuário passou `--mcp-servers`: `python3 ~/.claude/tools/token-monitor/report.py --mcp-servers`
