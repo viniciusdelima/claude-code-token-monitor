@@ -34,6 +34,33 @@ def _growth_label(tool_names):
     return report_queries.NATIVE_CATEGORY_LABELS.get(category, category)
 
 
+def _growth_detail(tool_names, tool_detail):
+    """Choose one non-overlapping detail bucket for the preceding turn."""
+    server = report_queries.extract_mcp_server(tool_names)
+    if server != "native":
+        return f"MCP:{server}"
+
+    category = report_queries.extract_native_category(tool_names)
+    details = [d for d in (tool_detail or "").split(",") if d]
+
+    if category == "shell":
+        return next((d for d in details if d.startswith("Bash:")), "Bash:unknown")
+    if category == "exploracao":
+        return next((d for d in details if d in {"Read", "Grep", "Glob"}), "exploração:unknown")
+    if category == "codigo":
+        return next((d for d in details if d in {"Write", "Edit", "NotebookEdit"}), "código:unknown")
+    if category == "sem_ferramenta":
+        return "sem ferramenta"
+    return report_queries.NATIVE_CATEGORY_LABELS.get(category, category)
+
+
+def _add_growth(bucket_map, label, delta):
+    bucket = bucket_map[label]
+    bucket["growth_tokens"] += delta
+    bucket["events"] += 1
+    bucket["max_growth"] = max(bucket["max_growth"], delta)
+
+
 def query_context_growth(conn, since=None):
     """Measure observed context growth between consecutive inferences.
 
@@ -48,7 +75,7 @@ def query_context_growth(conn, since=None):
     """
     where, params = _where_clause(since)
     sql = f"""
-        SELECT uuid, session_id, project, timestamp, tool_names, output_tokens,
+        SELECT uuid, session_id, project, timestamp, tool_names, tool_detail, output_tokens,
                {CONTEXT_SIZE_EXPR} AS context_size
         FROM usage_events
         {where}
@@ -59,6 +86,11 @@ def query_context_growth(conn, since=None):
     rows = [dict(zip(columns, row)) for row in cur.fetchall()]
 
     buckets = defaultdict(lambda: {
+        "growth_tokens": 0,
+        "events": 0,
+        "max_growth": 0,
+    })
+    detail_buckets = defaultdict(lambda: {
         "growth_tokens": 0,
         "events": 0,
         "max_growth": 0,
@@ -85,15 +117,15 @@ def query_context_growth(conn, since=None):
 
         if delta > 0:
             label = _growth_label(previous["tool_names"])
-            bucket = buckets[label]
-            bucket["growth_tokens"] += delta
-            bucket["events"] += 1
-            bucket["max_growth"] = max(bucket["max_growth"], delta)
+            detail = _growth_detail(previous["tool_names"], previous["tool_detail"])
+            _add_growth(buckets, label, delta)
+            _add_growth(detail_buckets, detail, delta)
             top_events.append({
                 "session_id": row["session_id"],
                 "project": row["project"],
                 "timestamp": row["timestamp"],
                 "label": label,
+                "detail": detail,
                 "growth_tokens": delta,
                 "from_context": previous_context,
                 "to_context": current_context,
@@ -115,10 +147,22 @@ def query_context_growth(conn, since=None):
             "avg_growth": values["growth_tokens"] / values["events"] if values["events"] else 0,
         })
     bucket_rows.sort(key=lambda r: -r["growth_tokens"])
+
+    detail_rows = []
+    for label, values in detail_buckets.items():
+        detail_rows.append({
+            "bucket": label,
+            "growth_tokens": values["growth_tokens"],
+            "events": values["events"],
+            "max_growth": values["max_growth"],
+            "avg_growth": values["growth_tokens"] / values["events"] if values["events"] else 0,
+        })
+    detail_rows.sort(key=lambda r: -r["growth_tokens"])
     top_events.sort(key=lambda r: -r["growth_tokens"])
 
     return {
         "rows": bucket_rows,
+        "detail_rows": detail_rows,
         "total_growth_tokens": sum(r["growth_tokens"] for r in bucket_rows),
         "session_count": session_count,
         "first_context_total": first_context_total,
@@ -128,7 +172,7 @@ def query_context_growth(conn, since=None):
     }
 
 
-def format_context_growth(metrics, limit=8, event_limit=5):
+def format_context_growth(metrics, limit=8, detail_limit=10, event_limit=5):
     total = metrics["total_growth_tokens"]
     if total <= 0:
         return "Crescimento efetivo do contexto:\n  Sem crescimento positivo suficiente no período."
@@ -144,6 +188,16 @@ def format_context_growth(metrics, limit=8, event_limit=5):
             f"{row['events']} crescimentos, média +{row['avg_growth']:.0f}, pico +{row['max_growth']}"
         )
 
+    if metrics.get("detail_rows"):
+        lines.append("  Detalhamento dos vetores de crescimento:")
+        for row in metrics["detail_rows"][:detail_limit]:
+            share = row["growth_tokens"] / total * 100
+            lines.append(
+                f"    - {row['bucket']}: +{row['growth_tokens']} ({share:.1f}%), "
+                f"{row['events']} crescimentos, média +{row['avg_growth']:.0f}, "
+                f"pico +{row['max_growth']}"
+            )
+
     if metrics["reset_events"]:
         lines.append(
             f"  - resets/compactações detectados: {metrics['reset_events']} "
@@ -155,7 +209,7 @@ def format_context_growth(metrics, limit=8, event_limit=5):
         for event in metrics["top_events"][:event_limit]:
             lines.append(
                 f"    - {event['session_id'][:8]}... {event['from_context']} -> {event['to_context']} "
-                f"(+{event['growth_tokens']}) após {event['label']} "
+                f"(+{event['growth_tokens']}) após {event['label']} / {event['detail']} "
                 f"[{event['previous_tools']}]"
             )
 

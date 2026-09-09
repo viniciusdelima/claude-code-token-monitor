@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import db
+from tool_detail import extract_tool_detail
 
 DEFAULT_PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
@@ -47,6 +48,7 @@ def parse_line(line):
         cache_creation_5m = cache_creation_total
         cache_creation_1h = 0
 
+    content_blocks = message.get("content") or []
     return {
         "uuid": obj.get("uuid"),
         "session_id": obj.get("sessionId"),
@@ -61,7 +63,8 @@ def parse_line(line):
         "cache_creation_1h_tokens": cache_creation_1h,
         "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
         "thinking_tokens": thinking,
-        "tool_names": extract_tool_names(message.get("content") or []),
+        "tool_names": extract_tool_names(content_blocks),
+        "tool_detail": extract_tool_detail(content_blocks),
         "inference_geo": usage.get("inference_geo"),
     }
 
@@ -85,14 +88,33 @@ def ingest_file(conn, path):
                     (uuid, session_id, project, cwd, timestamp, model,
                      input_tokens, output_tokens, cache_creation_tokens,
                      cache_creation_5m_tokens, cache_creation_1h_tokens,
-                     cache_read_tokens, thinking_tokens, tool_names, inference_geo)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     cache_read_tokens, thinking_tokens, tool_names, tool_detail, inference_geo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(uuid) DO UPDATE SET
-                        cache_creation_5m_tokens = excluded.cache_creation_5m_tokens,
-                        cache_creation_1h_tokens = excluded.cache_creation_1h_tokens
-                    WHERE usage_events.cache_creation_5m_tokens = 0
-                      AND usage_events.cache_creation_1h_tokens = 0
-                      AND usage_events.cache_creation_tokens > 0
+                        cache_creation_5m_tokens = CASE
+                            WHEN usage_events.cache_creation_5m_tokens = 0
+                             AND usage_events.cache_creation_1h_tokens = 0
+                             AND usage_events.cache_creation_tokens > 0
+                            THEN excluded.cache_creation_5m_tokens
+                            ELSE usage_events.cache_creation_5m_tokens
+                        END,
+                        cache_creation_1h_tokens = CASE
+                            WHEN usage_events.cache_creation_5m_tokens = 0
+                             AND usage_events.cache_creation_1h_tokens = 0
+                             AND usage_events.cache_creation_tokens > 0
+                            THEN excluded.cache_creation_1h_tokens
+                            ELSE usage_events.cache_creation_1h_tokens
+                        END,
+                        tool_detail = CASE
+                            WHEN usage_events.tool_detail IS NULL OR usage_events.tool_detail = ''
+                            THEN excluded.tool_detail
+                            ELSE usage_events.tool_detail
+                        END
+                    WHERE (usage_events.cache_creation_5m_tokens = 0
+                           AND usage_events.cache_creation_1h_tokens = 0
+                           AND usage_events.cache_creation_tokens > 0)
+                       OR ((usage_events.tool_detail IS NULL OR usage_events.tool_detail = '')
+                           AND excluded.tool_detail != '')
                     """,
                     (
                         event["uuid"], event["session_id"], event["project"],
@@ -102,6 +124,7 @@ def ingest_file(conn, path):
                         event["cache_creation_5m_tokens"], event["cache_creation_1h_tokens"],
                         event["cache_read_tokens"],
                         event["thinking_tokens"], event["tool_names"],
+                        event["tool_detail"],
                         event["inference_geo"],
                     ),
                 )
@@ -138,7 +161,7 @@ def ingest_all(conn, projects_root=DEFAULT_PROJECTS_ROOT):
 def main(argv=None):
     conn = db.get_connection()
     inserted = ingest_all(conn)
-    print(f"Ingested {inserted} new events.")
+    print(f"Ingested {inserted} new or enriched events.")
     conn.close()
 
 
