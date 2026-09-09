@@ -60,10 +60,12 @@ def _resolve_prices(model, managed_pricing):
 
 
 def estimate_cost_usd(
-    model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+    model, input_tokens, output_tokens,
+    cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_tokens,
     inference_geo=None, managed_settings_path=None,
 ):
-    if not (input_tokens or output_tokens or cache_creation_tokens or cache_read_tokens):
+    if not (input_tokens or output_tokens or cache_creation_5m_tokens
+             or cache_creation_1h_tokens or cache_read_tokens):
         # A model contributing zero tokens shouldn't blank out a whole bucket
         # as "unknown cost", even if the model itself is unrecognized.
         return 0.0
@@ -73,12 +75,11 @@ def estimate_cost_usd(
     if prices is None:
         return None
 
-    # cache_creation_tokens isn't split by TTL in usage_events, so this
-    # approximates every cache write at the 5-minute rate (the common case).
     total = (
         input_tokens * prices["input"]
         + output_tokens * prices["output"]
-        + cache_creation_tokens * prices["cache_write_5m"]
+        + cache_creation_5m_tokens * prices["cache_write_5m"]
+        + cache_creation_1h_tokens * prices["cache_write_1h"]
         + cache_read_tokens * prices["cache_read"]
     )
     if inference_geo == "us":

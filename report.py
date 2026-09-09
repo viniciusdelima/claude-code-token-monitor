@@ -54,6 +54,8 @@ def query_report(conn, period="day", group_by="day", since=None):
                SUM(input_tokens) AS input_tokens,
                SUM(output_tokens) AS output_tokens,
                SUM(cache_creation_tokens) AS cache_creation_tokens,
+               SUM(cache_creation_5m_tokens) AS cache_creation_5m_tokens,
+               SUM(cache_creation_1h_tokens) AS cache_creation_1h_tokens,
                SUM(cache_read_tokens) AS cache_read_tokens
         FROM usage_events
         {where}
@@ -83,7 +85,8 @@ def query_report(conn, period="day", group_by="day", since=None):
         entry["cache_read_tokens"] += row["cache_read_tokens"]
         cost = pricing.estimate_cost_usd(
             row["model"], row["input_tokens"], row["output_tokens"],
-            row["cache_creation_tokens"], row["cache_read_tokens"],
+            row["cache_creation_5m_tokens"], row["cache_creation_1h_tokens"],
+            row["cache_read_tokens"],
             inference_geo=row["inference_geo"],
         )
         if cost is None:
@@ -146,7 +149,8 @@ def query_mcp_server_report(conn, since=None):
     where, params = _where_clause(since)
     sql = f"""
         SELECT tool_names, model, inference_geo,
-               input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+               input_tokens, output_tokens, cache_creation_tokens,
+               cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_tokens
         FROM usage_events
         {where}
     """
@@ -165,7 +169,8 @@ def query_mcp_server_report(conn, since=None):
         entry["cache_read_tokens"] += row["cache_read_tokens"]
         cost = pricing.estimate_cost_usd(
             row["model"], row["input_tokens"], row["output_tokens"],
-            row["cache_creation_tokens"], row["cache_read_tokens"],
+            row["cache_creation_5m_tokens"], row["cache_creation_1h_tokens"],
+            row["cache_read_tokens"],
             inference_geo=row["inference_geo"],
         )
         if cost is None:
@@ -188,7 +193,8 @@ def query_native_category_report(conn, since=None):
     where, params = _where_clause(since)
     sql = f"""
         SELECT tool_names, model, inference_geo,
-               input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+               input_tokens, output_tokens, cache_creation_tokens,
+               cache_creation_5m_tokens, cache_creation_1h_tokens, cache_read_tokens
         FROM usage_events
         {where}
     """
@@ -209,7 +215,8 @@ def query_native_category_report(conn, since=None):
         entry["cache_read_tokens"] += row["cache_read_tokens"]
         cost = pricing.estimate_cost_usd(
             row["model"], row["input_tokens"], row["output_tokens"],
-            row["cache_creation_tokens"], row["cache_read_tokens"],
+            row["cache_creation_5m_tokens"], row["cache_creation_1h_tokens"],
+            row["cache_read_tokens"],
             inference_geo=row["inference_geo"],
         )
         if cost is None:

@@ -36,6 +36,17 @@ def parse_line(line):
     project = Path(cwd).name if cwd else "unknown"
     thinking = (usage.get("output_tokens_details") or {}).get("thinking_tokens", 0)
 
+    cache_creation_total = usage.get("cache_creation_input_tokens", 0)
+    cache_creation_detail = usage.get("cache_creation")
+    if cache_creation_detail:
+        cache_creation_5m = cache_creation_detail.get("ephemeral_5m_input_tokens", 0)
+        cache_creation_1h = cache_creation_detail.get("ephemeral_1h_input_tokens", 0)
+    else:
+        # Older transcripts predate the ephemeral_5m/1h split -- assume 5m
+        # (the common case, and what the pricing code assumed before this field existed).
+        cache_creation_5m = cache_creation_total
+        cache_creation_1h = 0
+
     return {
         "uuid": obj.get("uuid"),
         "session_id": obj.get("sessionId"),
@@ -45,7 +56,9 @@ def parse_line(line):
         "model": message.get("model"),
         "input_tokens": usage.get("input_tokens", 0),
         "output_tokens": usage.get("output_tokens", 0),
-        "cache_creation_tokens": usage.get("cache_creation_input_tokens", 0),
+        "cache_creation_tokens": cache_creation_total,
+        "cache_creation_5m_tokens": cache_creation_5m,
+        "cache_creation_1h_tokens": cache_creation_1h,
         "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
         "thinking_tokens": thinking,
         "tool_names": extract_tool_names(message.get("content") or []),
@@ -68,17 +81,26 @@ def ingest_file(conn, path):
                 event["project"] = path.parent.name
                 cur = conn.execute(
                     """
-                    INSERT OR IGNORE INTO usage_events
+                    INSERT INTO usage_events
                     (uuid, session_id, project, cwd, timestamp, model,
                      input_tokens, output_tokens, cache_creation_tokens,
+                     cache_creation_5m_tokens, cache_creation_1h_tokens,
                      cache_read_tokens, thinking_tokens, tool_names, inference_geo)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(uuid) DO UPDATE SET
+                        cache_creation_5m_tokens = excluded.cache_creation_5m_tokens,
+                        cache_creation_1h_tokens = excluded.cache_creation_1h_tokens
+                    WHERE usage_events.cache_creation_5m_tokens = 0
+                      AND usage_events.cache_creation_1h_tokens = 0
+                      AND usage_events.cache_creation_tokens > 0
                     """,
                     (
                         event["uuid"], event["session_id"], event["project"],
                         event["cwd"], event["timestamp"], event["model"],
                         event["input_tokens"], event["output_tokens"],
-                        event["cache_creation_tokens"], event["cache_read_tokens"],
+                        event["cache_creation_tokens"],
+                        event["cache_creation_5m_tokens"], event["cache_creation_1h_tokens"],
+                        event["cache_read_tokens"],
                         event["thinking_tokens"], event["tool_names"],
                         event["inference_geo"],
                     ),
