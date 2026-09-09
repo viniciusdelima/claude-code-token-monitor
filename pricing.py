@@ -45,6 +45,7 @@ def _resolve_prices(model, managed_pricing):
             "input": override["input"],
             "output": override["output"],
             "cache_write_5m": override["cacheWrite"],
+            "cache_write_1h": override.get("cacheWrite1h", override["cacheWrite"]),
             "cache_read": override["cacheRead"],
         }
     else:

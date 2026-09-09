@@ -34,9 +34,12 @@ def test_parse_line_extracts_assistant_with_usage():
         "input_tokens": 6,
         "output_tokens": 188,
         "cache_creation_tokens": 36797,
+        "cache_creation_5m_tokens": 36797,
+        "cache_creation_1h_tokens": 0,
         "cache_read_tokens": 0,
         "thinking_tokens": 83,
         "tool_names": "Read",
+        "tool_detail": "Read",
         "inference_geo": None,
     }
 
