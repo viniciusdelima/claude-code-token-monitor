@@ -10,6 +10,9 @@ Argumentos aceitos após `/token-report` (todos opcionais):
 - período: `day` (default), `week`, `month`
 - `--group-by`: `day` (default), `session`, `project`
 - `--since YYYY-MM-DD`
+- `benchmark --label <nome>`: captura o baseline da primeira inferência da sessão atual e salva como snapshot nomeado. Use uma sessão nova para cada configuração do harness.
+- `benchmark compare [--base <nome>]`: compara o snapshot mais recente de cada configuração; `--base` escolhe a referência.
+- `benchmark list`: lista os benchmarks já capturados.
 - `--mcp-servers`: em vez do relatório por período, mostra custo/tokens
   agrupado por servidor MCP (`native` = só ferramenta nativa, `mixed` = mais
   de um servidor distinto no mesmo turno). Ignora `--period`/`--group-by`
@@ -30,6 +33,17 @@ Argumentos aceitos após `/token-report` (todos opcionais):
 - `insights.py --history [--period <period>]`: lista os snapshots de
   diagnóstico já salvos para o período dado (mais recente primeiro), para
   comparar entre execuções sem gerar um novo diagnóstico.
+
+## Benchmark do baseline do harness
+
+Quando o primeiro argumento for `benchmark`, não gere o relatório normal nem rode `insights.py`.
+
+- Captura: primeiro rode `python3 ~/.claude/tools/token-monitor/ingest.py`, depois
+  `python3 ~/.claude/tools/token-monitor/benchmark.py capture --label <nome>`.
+- Comparação: `python3 ~/.claude/tools/token-monitor/benchmark.py compare [--base <nome>]`.
+- Lista: `python3 ~/.claude/tools/token-monitor/benchmark.py list`.
+
+O benchmark mede somente a primeira inferência da sessão (`input + cache write + cache read`), para isolar o piso de contexto do harness. Para um A/B confiável, abra uma sessão nova para cada configuração e use sempre a mesma probe curta antes da captura. O script não chama o Claude e não gera inferências extras.
 
 ## Passos
 

@@ -37,6 +37,25 @@ CREATE TABLE IF NOT EXISTS diagnosis_snapshots (
   report_text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_diagnosis_period_time ON diagnosis_snapshots(period, generated_at);
+
+CREATE TABLE IF NOT EXISTS benchmark_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  generated_at TEXT NOT NULL,
+  label TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  project TEXT NOT NULL,
+  model TEXT,
+  event_timestamp TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_creation_5m_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  initial_context_tokens INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_benchmark_time ON benchmark_snapshots(generated_at);
+CREATE INDEX IF NOT EXISTS idx_benchmark_label ON benchmark_snapshots(label, generated_at);
 """
 
 DEFAULT_DB_PATH = Path.home() / ".claude" / "token-monitor" / "usage.db"
