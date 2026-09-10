@@ -26,8 +26,6 @@ CREATE TABLE IF NOT EXISTS usage_events (
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_events(project);
-CREATE INDEX IF NOT EXISTS idx_usage_source_type ON usage_events(source_type);
-CREATE INDEX IF NOT EXISTS idx_usage_agent_id ON usage_events(agent_id);
 
 CREATE TABLE IF NOT EXISTS diagnosis_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
