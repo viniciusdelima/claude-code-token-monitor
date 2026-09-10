@@ -1,6 +1,6 @@
 ---
 name: token-report
-description: Relatório de tokens gastos no Claude Code (dia/semana/mês/sessão/projeto), com custo estimado, uso por subagente e detecção de anomalia com evidência concreta. Use quando o usuário pedir "quanto gastei de token", "relatório de uso de tokens", "/token-report", ou perguntar sobre consumo/custo do Claude Code.
+description: Relatório de tokens gastos no Claude Code (dia/semana/mês/sessão/projeto), com custo estimado, uso/contexto por subagente e detecção de anomalia com evidência concreta. Use quando o usuário pedir "quanto gastei de token", "relatório de uso de tokens", "/token-report", ou perguntar sobre consumo/custo do Claude Code.
 ---
 
 Gera o relatório de uso de tokens do Claude Code nesta máquina, a partir dos
@@ -15,6 +15,11 @@ Argumentos aceitos após `/token-report` (todos opcionais):
   cada subagente, separado por `agentId`, incluindo inferências, input, output,
   cache write, cache read, tokens totais e custo. Não confundir com a categoria
   `Task`, que mede apenas a inferência que despacha o subagente no agente pai.
+- `--subagents --context [--since <since>] [--session <session-id>]`: além do
+  consumo real, analisa a evolução da janela interna de cada subagente. Mostra
+  contexto inicial/médio/pico/final, cache-read share, tokens por inferência,
+  crescimento positivo observado, quedas/resets e até 8 segmentos cronológicos
+  por agente com contexto médio/pico e cache read médio por inferência.
 - `benchmark --label <nome>`: captura o baseline da primeira inferência da sessão atual e salva como snapshot nomeado. Use uma sessão nova para cada configuração do harness.
 - `benchmark compare [--base <nome>]`: compara o snapshot mais recente de cada configuração; `--base` escolhe a referência.
 - `benchmark list`: lista os benchmarks já capturados.
@@ -25,122 +30,93 @@ Argumentos aceitos após `/token-report` (todos opcionais):
 - `--diagnose`: diagnóstico de gargalo em três perspectivas complementares:
   1. **tokens processados/custo por tipo de inferência** — MCP externo vs uso
      nativo/contexto e, dentro do nativo, despacho de subagente/Task, skill,
-     escrita de código, shell, web, exploração e planejamento. Essa visão
-     atribui todo o contexto processado da inferência à categoria daquele turno;
-     portanto "sem ferramenta" não significa que texto puro gerou todos aqueles tokens.
-  2. **crescimento efetivo da janela de contexto** — mede o delta positivo
-     entre inferências consecutivas da mesma sessão e atribui o delta ao turno
-     anterior. A primeira inferência é baseline e deltas negativos de
-     `/clear`/compactação são reportados separadamente, sem reduzir o crescimento
-     positivo. A atribuição é observacional (turno precedente), não proveniência
-     byte a byte.
-  3. **uso interno dos subagentes** — lê os eventos `isSidechain: true` já
-     ingeridos e agrega cada `agentId`, mostrando quantas inferências executou e
-     quanto consumiu em input/cache write/cache read/output/custo. Essa é a visão
-     correta para medir o custo do trabalho interno de um subagente; `Task` é só
-     o despacho no pai.
-  Também mostra sessões do período acima da média e a anomalia vs histórico de
-  30 dias. Cada execução salva um snapshot local do diagnóstico principal e
-  mostra a comparação com o snapshot anterior do mesmo `--period`.
+     escrita de código, shell, web, exploração e planejamento.
+  2. **crescimento efetivo da janela de contexto** — mede deltas positivos
+     entre inferências consecutivas da mesma stream/janela, nunca misturando
+     main e subagentes diferentes mesmo quando compartilham `session_id`.
+     A primeira inferência de cada stream é baseline; quedas são reportadas
+     separadamente e não reduzem o crescimento positivo.
+  3. **uso interno dos subagentes** — agrega eventos `isSidechain: true` por
+     `agentId`, mostrando inferências e consumo em input/cache/output/custo.
+  O `--diagnose` mantém apenas o resumo de subagentes. Para curva detalhada de
+  janela interna use `/token-report --subagents --context`.
 - `report.py --native-categories [--since <since>]`: só o recorte de tokens
-  processados por tipo de inferência nativa, sem o resto do diagnóstico.
-- `subagent_report.py [--since <since>] [--session <session-id>]`: só a visão
-  de consumo real por subagente.
-- `context_growth.py [--period <period>] [--since <since>]`: só o crescimento
-  efetivo da janela de contexto por origem/turno precedente, incluindo os
-  maiores saltos observados.
-- `insights.py --history [--period <period>]`: lista os snapshots de
-  diagnóstico já salvos para o período dado (mais recente primeiro), para
-  comparar entre execuções sem gerar um novo diagnóstico.
-- `--setup-statusline`: configura (ou reconfigura) o contador no statusline
-  sem gerar relatório nenhum. Roda
-  `python3 ~/.claude/tools/token-monitor/setup_statusline.py` e mostra a
-  saída ao usuário.
+  processados por tipo de inferência nativa.
+- `subagent_report.py [--context] [--since <since>] [--session <session-id>]`:
+  visão de consumo real por subagente; com `--context`, inclui evolução da
+  janela interna de cada `agentId`.
+- `context_growth.py [--period <period>] [--since <since>]`: crescimento
+  efetivo da janela por stream e origem/turno precedente.
+- `insights.py --history [--period <period>]`: lista snapshots anteriores.
+- `--setup-statusline`: configura/reconfigura o contador no statusline.
 
-## Statusline (contador no rodapé)
+## Statusline
 
-Na primeira vez que este skill for usado nesta máquina (ou sempre que o
-usuário pedir explicitamente `--setup-statusline` / "configura o statusline"
-/ "mostra os tokens no rodapé"), rode, antes de qualquer outro passo:
+Na primeira vez que este skill for usado nesta máquina, ou quando pedido
+explicitamente, rode:
 
 `python3 ~/.claude/tools/token-monitor/setup_statusline.py`
 
-Esse script é idempotente e seguro rodar de novo — se o statusline já está
-configurado, ele só confirma e não mexe em nada; senão, cria/ajusta
-`~/.claude/hooks/combined-statusline.sh` (com backup `.bak` se já existir
-algo lá) e aponta `statusLine` do `~/.claude/settings.json` pra ele (também
-com backup). Isso liga um contador no rodapé do Claude Code com:
-- 🔥 tokens totais gastos hoje
-- 💬 tokens gastos nesta sessão
-- 🧠 tamanho da janela de contexto atual (usado/total e %), em verde
-  (<80k tokens), amarelo (80k–120k) ou vermelho (≥120k)
-
-Se o usuário só pediu o relatório normal (sem mencionar statusline), não
-rode esse setup automaticamente toda vez — só na primeira execução deste
-skill na sessão/máquina (detectável perguntando ao usuário ou checando se
-`~/.claude/hooks/combined-statusline.sh` já existe e menciona
-`token-monitor`/`statusline.py`) ou quando pedido explicitamente.
+Se o usuário só pediu relatório normal, não rode o setup automaticamente toda
+vez.
 
 ## Benchmark do baseline do harness
 
-Quando o primeiro argumento for `benchmark`, não gere o relatório normal nem rode `insights.py`.
+Quando o primeiro argumento for `benchmark`, não gere o relatório normal nem
+rode `insights.py`.
 
-- Captura: primeiro rode `python3 ~/.claude/tools/token-monitor/ingest.py`, depois
+- Captura: `python3 ~/.claude/tools/token-monitor/ingest.py`, depois
   `python3 ~/.claude/tools/token-monitor/benchmark.py capture --label <nome>`.
 - Comparação: `python3 ~/.claude/tools/token-monitor/benchmark.py compare [--base <nome>]`.
 - Lista: `python3 ~/.claude/tools/token-monitor/benchmark.py list`.
 
-O benchmark mede somente a primeira inferência da sessão (`input + cache write + cache read`), para isolar o piso de contexto do harness. Para um A/B confiável, abra uma sessão nova para cada configuração e use sempre a mesma probe curta antes da captura. O script não chama o Claude e não gera inferências extras.
-
 ## Passos
 
-1. Ingerir dados novos (idempotente, seguro rodar sempre):
+1. Ingerir dados novos (idempotente):
    `python3 ~/.claude/tools/token-monitor/ingest.py`
 
-2. Se o usuário pediu `--subagents` sem diagnóstico:
-   `python3 ~/.claude/tools/token-monitor/subagent_report.py [--since <since>] [--session <session-id>]`
+2. Se o usuário pediu `--subagents --context`:
+   `python3 ~/.claude/tools/token-monitor/subagent_report.py --context [--since <since>] [--session <session-id>]`
    - Apresente a saída completa.
-   - Explique que os totais representam as inferências executadas dentro dos
-     JSONL dos subagentes, e não apenas o turno `Task` do agente pai.
+   - Explique que `context_size = input + cache write + cache read`; output não
+     entra no tamanho da janela.
+   - Cada `agent_id` é uma stream independente.
+   - Cache read é contexto processado/reutilizado; alto cache read não significa
+     o mesmo volume de contexto novo.
+   - Crescimentos/quedas são observacionais; não rotule toda queda como
+     `/compact` manual.
+   - Tokens altos não significam automaticamente desperdício.
    - Pule os demais passos.
 
-3. Se o usuário pediu diagnóstico/gargalo/insights de redução (ex: "onde está
-   o gargalo", "estou gastando acima da média", "como reduzir tokens"):
-   - Histórico de execuções anteriores: `python3 ~/.claude/tools/token-monitor/insights.py --history [--period <period>]`
-   - Novo diagnóstico principal (gera e persiste snapshot):
-     `python3 ~/.claude/tools/token-monitor/insights.py --diagnose [--period <period>] [--since <since>]`
-   - Crescimento efetivo da janela (não persiste snapshot):
-     `python3 ~/.claude/tools/token-monitor/context_growth.py [--period <period>] [--since <since>]`
-   - Uso interno por subagente:
-     `python3 ~/.claude/tools/token-monitor/subagent_report.py [--since <since>]`
-   - Apresente **as três saídas completas**, em seções separadas:
-     - `Tokens processados / custo por tipo de inferência`
-     - `Crescimento efetivo da janela de contexto`
-     - `Uso interno dos subagentes`
-   - Não descreva a categoria `sem ferramenta` como "texto gerado" ou como
-     causa direta de crescimento; ela significa apenas que não havia
-     ferramenta registrada naquela inferência.
-   - Não descreva `subagente/Task` como o custo completo dos subagentes: essa
-     categoria é somente o turno de despacho. Use `subagent_report.py` para o
-     consumo interno real.
-   - No crescimento efetivo, deixe claro que o delta é atribuído ao turno
-     anterior e pode combinar resposta do Claude, resultado de tool e novo
-     input do usuário.
-   - Pule os passos 4-5 abaixo.
+3. Se o usuário pediu `--subagents` sem `--context`:
+   `python3 ~/.claude/tools/token-monitor/subagent_report.py [--since <since>] [--session <session-id>]`
+   - Apresente a saída completa.
+   - Explique que os totais representam inferências executadas dentro dos JSONL
+     dos subagentes, não apenas o turno `Task` do agente pai.
+   - Pule os demais passos.
 
-4. Senão, gerar o relatório:
-   - Se o usuário passou `--mcp-servers`: `python3 ~/.claude/tools/token-monitor/report.py --mcp-servers`
-   - Senão: `python3 ~/.claude/tools/token-monitor/report.py --period <period> --group-by <group_by> [--since <since>]`
-     (se `<period>`/`<group_by>` não foram passados pelo usuário, pode omitir
-     as flags — o script reusa o último valor salvo automaticamente)
+4. Se o usuário pediu diagnóstico/gargalo/insights de redução:
+   - `python3 ~/.claude/tools/token-monitor/insights.py --history [--period <period>]`
+   - `python3 ~/.claude/tools/token-monitor/insights.py --diagnose [--period <period>] [--since <since>]`
+   - `python3 ~/.claude/tools/token-monitor/context_growth.py [--period <period>] [--since <since>]`
+   - `python3 ~/.claude/tools/token-monitor/subagent_report.py [--since <since>]`
+   - Apresente as três saídas em seções separadas.
+   - Não descreva `sem ferramenta` como texto gerado ou causa direta.
+   - Não descreva `Task` como custo completo dos subagentes.
+   - No crescimento, deixe claro que o delta é da mesma stream e atribuído ao
+     turno precedente; pode combinar resposta, tool result e novo input.
+   - Sugira `--subagents --context` quando for útil investigar inflação de
+     janela/reprocessamento.
+   - Pule os passos seguintes.
 
-5. Checar anomalia no período recente (30 dias):
+5. Senão, gerar relatório normal:
+   - `--mcp-servers`: `python3 ~/.claude/tools/token-monitor/report.py --mcp-servers`
+   - caso contrário: `python3 ~/.claude/tools/token-monitor/report.py --period <period> --group-by <group_by> [--since <since>]`
+
+6. Checar anomalia recente:
    `python3 ~/.claude/tools/token-monitor/insights.py`
 
-6. Apresentar ao usuário a tabela do passo 4. Se o passo 5 imprimir algo
-   (não fica em branco), anexar como seção separada "Anomalia detectada",
-   com a evidência exatamente como veio na saída do script — não resumir os
-   números.
+7. Apresentar a tabela; se houver anomalia, anexar a evidência sem inventar
+números.
 
-Se qualquer passo falhar (ex: `ModuleNotFoundError`, banco não existe ainda),
-reportar o erro ao usuário em vez de inventar números.
+Se qualquer passo falhar, reporte o erro ao usuário em vez de inventar dados.
