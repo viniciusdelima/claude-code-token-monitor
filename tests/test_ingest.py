@@ -41,7 +41,27 @@ def test_parse_line_extracts_assistant_with_usage():
         "tool_names": "Read",
         "tool_detail": "Read",
         "inference_geo": None,
+        "source_type": "main",
+        "parent_session_id": None,
+        "agent_id": None,
     }
+
+
+def test_parse_line_extracts_subagent_metadata():
+    line = json.dumps({
+        "type": "assistant", "uuid": "u-side", "sessionId": "parent-session",
+        "agentId": "agent-123", "isSidechain": True,
+        "cwd": "/home/dev/myproject", "timestamp": "2026-09-10T10:00:00Z",
+        "message": {
+            "model": "claude-sonnet-5", "content": [],
+            "usage": {"input_tokens": 5, "output_tokens": 10,
+                      "cache_read_input_tokens": 100},
+        },
+    })
+    event = ingest.parse_line(line)
+    assert event["source_type"] == "subagent"
+    assert event["parent_session_id"] == "parent-session"
+    assert event["agent_id"] == "agent-123"
 
 
 def test_parse_line_extracts_inference_geo_when_present():
@@ -81,7 +101,7 @@ def test_ingest_file_inserts_only_usable_events(tmp_path):
 
     inserted = ingest.ingest_file(conn, FIXTURE)
 
-    assert inserted == 1  # only the middle line has usage
+    assert inserted == 1
     row = conn.execute("SELECT uuid FROM usage_events").fetchone()
     assert row == ("uuid-1",)
     conn.close()
@@ -95,7 +115,7 @@ def test_ingest_file_is_idempotent(tmp_path):
     second = ingest.ingest_file(conn, FIXTURE)
 
     assert first == 1
-    assert second == 0  # same uuid, already present
+    assert second == 0
     count = conn.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0]
     assert count == 1
     conn.close()
@@ -129,10 +149,6 @@ def test_ingest_all_sums_across_files(tmp_path):
 
 
 def test_ingest_file_derives_project_from_path_not_cwd(tmp_path):
-    # Claude Code names a session's project dir from the cwd the session was
-    # *launched* from, but `cwd` on later JSONL lines follows the shell if
-    # the user `cd`s mid-session. `project` must reflect the file's real
-    # on-disk containing directory, never a drifted `cwd`.
     proj_dir = tmp_path / "actual-project-dir"
     proj_dir.mkdir()
     line = json.dumps(
@@ -154,14 +170,72 @@ def test_ingest_file_derives_project_from_path_not_cwd(tmp_path):
 
     db_path = tmp_path / "usage.db"
     conn = db.get_connection(db_path)
-
     inserted = ingest.ingest_file(conn, session_path)
 
     assert inserted == 1
     row = conn.execute(
         "SELECT project FROM usage_events WHERE uuid = 'uuid-drift'"
     ).fetchone()
-    assert row == ("actual-project-dir",)  # not "that-does-not-match" from cwd
+    assert row == ("actual-project-dir",)
+    conn.close()
+
+
+def test_ingest_file_derives_subagent_source_from_nested_path(tmp_path):
+    project_dir = tmp_path / "actual-project"
+    subagents_dir = project_dir / "parent-session" / "subagents"
+    subagents_dir.mkdir(parents=True)
+    line = json.dumps({
+        "type": "assistant", "uuid": "uuid-sub", "sessionId": "parent-session",
+        "agentId": "abc123", "isSidechain": True,
+        "cwd": "/home/dev/actual-project", "timestamp": "2026-09-10T10:00:00Z",
+        "message": {
+            "model": "claude-sonnet-5", "content": [],
+            "usage": {"input_tokens": 10, "output_tokens": 20,
+                      "cache_read_input_tokens": 1000},
+        },
+    })
+    path = subagents_dir / "agent-abc123.jsonl"
+    path.write_text(line + "\n")
+
+    conn = db.get_connection(tmp_path / "usage.db")
+    assert ingest.ingest_file(conn, path) == 1
+    row = conn.execute(
+        "SELECT project, source_type, parent_session_id, agent_id "
+        "FROM usage_events WHERE uuid = 'uuid-sub'"
+    ).fetchone()
+    assert row == ("actual-project", "subagent", "parent-session", "abc123")
+    conn.close()
+
+
+def test_ingest_file_backfills_existing_subagent_row(tmp_path):
+    project_dir = tmp_path / "actual-project"
+    subagents_dir = project_dir / "parent-session" / "subagents"
+    subagents_dir.mkdir(parents=True)
+    line = json.dumps({
+        "type": "assistant", "uuid": "uuid-old", "sessionId": "parent-session",
+        "agentId": "abc999", "isSidechain": True,
+        "cwd": "/home/dev/actual-project", "timestamp": "2026-09-10T10:00:00Z",
+        "message": {"model": "claude-sonnet-5", "content": [],
+                    "usage": {"input_tokens": 10, "output_tokens": 20}},
+    })
+    path = subagents_dir / "agent-abc999.jsonl"
+    path.write_text(line + "\n")
+
+    conn = db.get_connection(tmp_path / "usage.db")
+    conn.execute(
+        """INSERT INTO usage_events
+           (uuid, session_id, project, cwd, timestamp, model, input_tokens, output_tokens)
+           VALUES ('uuid-old', 'parent-session', 'subagents', '/home/dev/actual-project',
+                   '2026-09-10T10:00:00Z', 'claude-sonnet-5', 10, 20)"""
+    )
+    conn.commit()
+
+    assert ingest.ingest_file(conn, path) == 1
+    row = conn.execute(
+        "SELECT project, source_type, parent_session_id, agent_id "
+        "FROM usage_events WHERE uuid = 'uuid-old'"
+    ).fetchone()
+    assert row == ("actual-project", "subagent", "parent-session", "abc999")
     conn.close()
 
 
@@ -189,14 +263,10 @@ def test_ingest_file_persists_inference_geo(tmp_path):
 
 
 def test_ingest_file_skips_line_with_null_required_field(tmp_path):
-    # A line that parses fine (has a uuid) but is missing "sessionId",
-    # which is a NOT NULL column in the schema -> would raise
-    # sqlite3.IntegrityError on INSERT if not caught.
     bad_line = json.dumps(
         {
             "type": "assistant",
             "uuid": "uuid-bad",
-            # no "sessionId" at all -> parse_line yields session_id=None
             "cwd": "/home/dev/myproject",
             "timestamp": "2026-09-04T20:33:00.000Z",
             "message": {
@@ -225,10 +295,9 @@ def test_ingest_file_skips_line_with_null_required_field(tmp_path):
 
     db_path = tmp_path / "usage.db"
     conn = db.get_connection(db_path)
+    inserted = ingest.ingest_file(conn, session_path)
 
-    inserted = ingest.ingest_file(conn, session_path)  # must not raise
-
-    assert inserted == 1  # only the good line counted
+    assert inserted == 1
     row = conn.execute("SELECT uuid FROM usage_events").fetchone()
     assert row == ("uuid-good",)
     conn.close()
