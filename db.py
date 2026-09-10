@@ -18,11 +18,16 @@ CREATE TABLE IF NOT EXISTS usage_events (
   thinking_tokens INTEGER NOT NULL DEFAULT 0,
   tool_names TEXT,
   tool_detail TEXT,
-  inference_geo TEXT
+  inference_geo TEXT,
+  source_type TEXT NOT NULL DEFAULT 'main',
+  parent_session_id TEXT,
+  agent_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_events(project);
+CREATE INDEX IF NOT EXISTS idx_usage_source_type ON usage_events(source_type);
+CREATE INDEX IF NOT EXISTS idx_usage_agent_id ON usage_events(agent_id);
 
 CREATE TABLE IF NOT EXISTS diagnosis_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,10 +76,16 @@ def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
         "ALTER TABLE usage_events ADD COLUMN cache_creation_5m_tokens INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE usage_events ADD COLUMN cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE usage_events ADD COLUMN tool_detail TEXT",
+        "ALTER TABLE usage_events ADD COLUMN source_type TEXT NOT NULL DEFAULT 'main'",
+        "ALTER TABLE usage_events ADD COLUMN parent_session_id TEXT",
+        "ALTER TABLE usage_events ADD COLUMN agent_id TEXT",
     ):
         try:
             conn.execute(ddl)
             conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists (fresh DBs get it from SCHEMA_SQL above)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_source_type ON usage_events(source_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_agent_id ON usage_events(agent_id)")
+    conn.commit()
     return conn
