@@ -61,6 +61,19 @@ def _add_growth(bucket_map, label, delta):
     bucket["max_growth"] = max(bucket["max_growth"], delta)
 
 
+def _stream_key(row):
+    """Return the independent context stream for an inference.
+
+    Claude Code subagents reuse the parent's sessionId but maintain a separate
+    context window. agent_id therefore has to participate in the key; otherwise
+    main and sidechain contexts get compared against each other and create fake
+    growth/reset events.
+    """
+    if row.get("source_type") == "subagent":
+        return (row["session_id"], "subagent", row.get("agent_id") or "unknown")
+    return (row["session_id"], "main", None)
+
+
 def query_context_growth(conn, since=None):
     """Measure observed context growth between consecutive inferences.
 
@@ -70,16 +83,19 @@ def query_context_growth(conn, since=None):
     provenance: user input, assistant output and tool results may all
     contribute to the observed delta.
 
-    First inference of each session is excluded (baseline). Negative deltas
-    are tracked as resets/compactions and never subtract from positive growth.
+    Main conversation and every subagent are independent context streams even
+    though Claude Code records the same sessionId on sidechain events. The
+    first inference of each stream is excluded as baseline. Negative deltas are
+    tracked as resets/compactions and never subtract from positive growth.
     """
     where, params = _where_clause(since)
     sql = f"""
-        SELECT uuid, session_id, project, timestamp, tool_names, tool_detail, output_tokens,
+        SELECT uuid, session_id, project, timestamp, tool_names, tool_detail,
+               output_tokens, source_type, agent_id,
                {CONTEXT_SIZE_EXPR} AS context_size
         FROM usage_events
         {where}
-        ORDER BY session_id, timestamp, uuid
+        ORDER BY timestamp, uuid
     """
     cur = conn.execute(sql, params)
     columns = [d[0] for d in cur.description]
@@ -99,18 +115,20 @@ def query_context_growth(conn, since=None):
     reset_events = 0
     reset_tokens = 0
     first_context_total = 0
-    session_count = 0
+    seen_sessions = set()
+    seen_streams = set()
+    previous_by_stream = {}
 
-    previous = None
-    previous_session = None
     for row in rows:
-        if row["session_id"] != previous_session:
-            session_count += 1
+        seen_sessions.add(row["session_id"])
+        stream = _stream_key(row)
+        if stream not in previous_by_stream:
+            seen_streams.add(stream)
             first_context_total += row["context_size"] or 0
-            previous = row
-            previous_session = row["session_id"]
+            previous_by_stream[stream] = row
             continue
 
+        previous = previous_by_stream[stream]
         current_context = row["context_size"] or 0
         previous_context = previous["context_size"] or 0
         delta = current_context - previous_context
@@ -122,6 +140,8 @@ def query_context_growth(conn, since=None):
             _add_growth(detail_buckets, detail, delta)
             top_events.append({
                 "session_id": row["session_id"],
+                "agent_id": row.get("agent_id"),
+                "source_type": row.get("source_type") or "main",
                 "project": row["project"],
                 "timestamp": row["timestamp"],
                 "label": label,
@@ -135,7 +155,7 @@ def query_context_growth(conn, since=None):
             reset_events += 1
             reset_tokens += abs(delta)
 
-        previous = row
+        previous_by_stream[stream] = row
 
     bucket_rows = []
     for label, values in buckets.items():
@@ -164,7 +184,8 @@ def query_context_growth(conn, since=None):
         "rows": bucket_rows,
         "detail_rows": detail_rows,
         "total_growth_tokens": sum(r["growth_tokens"] for r in bucket_rows),
-        "session_count": session_count,
+        "session_count": len(seen_sessions),
+        "stream_count": len(seen_streams),
         "first_context_total": first_context_total,
         "reset_events": reset_events,
         "reset_tokens": reset_tokens,
@@ -179,7 +200,8 @@ def format_context_growth(metrics, limit=8, detail_limit=10, event_limit=5):
 
     lines = [
         "Crescimento efetivo do contexto (atribuído ao turno anterior):",
-        "  A primeira inferência de cada sessão é baseline e não entra nesta conta.",
+        "  Main e cada subagente são tratados como janelas independentes.",
+        "  A primeira inferência de cada janela é baseline e não entra nesta conta.",
     ]
     for row in metrics["rows"][:limit]:
         share = row["growth_tokens"] / total * 100
@@ -207,15 +229,19 @@ def format_context_growth(metrics, limit=8, detail_limit=10, event_limit=5):
     if metrics["top_events"]:
         lines.append("  Maiores saltos observados:")
         for event in metrics["top_events"][:event_limit]:
+            source = "main"
+            if event.get("source_type") == "subagent":
+                source = f"agent:{(event.get('agent_id') or 'unknown')[:8]}"
             lines.append(
-                f"    - {event['session_id'][:8]}... {event['from_context']} -> {event['to_context']} "
+                f"    - {event['session_id'][:8]}.../{source} "
+                f"{event['from_context']} -> {event['to_context']} "
                 f"(+{event['growth_tokens']}) após {event['label']} / {event['detail']} "
                 f"[{event['previous_tools']}]"
             )
 
     lines.append(
-        "  Nota: atribuição é por turno precedente; o delta pode combinar resposta do Claude, "
-        "tool result e novo input do usuário. Não representa proveniência byte a byte."
+        "  Nota: atribuição é por turno precedente dentro da mesma janela; o delta pode combinar "
+        "resposta do Claude, tool result e novo input do usuário. Não representa proveniência byte a byte."
     )
     return "\n".join(lines)
 
